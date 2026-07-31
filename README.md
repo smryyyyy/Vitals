@@ -1,4 +1,4 @@
-<h1 align="center">Vitals v0.8.3</h1>
+<h1 align="center">Vitals v1.0.0</h1>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Swift-6.0+-F05138?style=flat-square&logo=swift&logoColor=white" alt="Swift">
@@ -27,8 +27,6 @@
   - **网络**：下载/上传速率 + 接口名 + IP
   - **电源**：电量 + 健康度 + 充放电状态 + 电池温度
   - **进程**：Top 3 进程按 CPU
-- **健康分（0-100）**：基于 CPU/内存/磁盘/电池阈值的综合评分
-- **历史 sparkline**：30 点环形 buffer，CPU 和网络速率趋势
 - **MiniMax 用量集成**：
   - 5h 限额 + 周限额实时查询
   - 自带"Xh Ym 后重置"倒计时
@@ -40,7 +38,7 @@
 - **后台采样能耗优化**：Timer tolerance 让 macOS 合并唤醒
 - **启动时间锁保护**：killStaleWidgetProcess 启动时清旧进程
 
-### v0.8.3 (本分支新增)
+### 本分支新增
 
 - 集成 **MiniMax 用量模块**：5h 限额 + 周限额 + 倒计时
 - 菜单栏指标新增 **MiniMax 5h** + **MiniMax 周** 选项（默认关闭，可独立勾选）
@@ -52,7 +50,6 @@
 - **桌面浮窗标题栏删除**（Vitals 名 + S/M/L 按钮 + 锁定 + 隐藏）
 - **所有用户可见英文 → 中文硬编码翻译**（菜单/标签/帮助/单位）
 - **电源状态修复**：用 AppleSmartBattery 注册表替换 IOKit IOPS API（解决 macOS 26 缓存不一致问题）
-- **Core N 翻译**（"核心 1" 代替 "Core 1"）
 - **App Group ID 简化**：使用 hardcoded 容器路径替代 App Groups（更简单的安装流程）
 
 ---
@@ -170,8 +167,7 @@ Vitals/
 │   ├── AppIcon.icns
 │   └── Info.plist
 ├── Scripts/
-│   ├── make-icon.swift                # 图标生成
-│   └── extract-minimax-cookies.*      # 抓 cookie 辅助
+│   └── make-icon.swift                # 图标生成
 ├── Tests/
 │   └── MoleWidgetCoreTests/ (16 文件)
 ├── Package.swift                       # SwiftPM 入口
