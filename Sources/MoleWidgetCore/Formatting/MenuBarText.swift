@@ -21,7 +21,7 @@ public struct MenuBarMetric: Equatable {
 /// A metric that can be shown in the menu bar, in canonical display order.
 /// `network` and `disk` each pair two directions in one stacked column.
 public enum MenuBarMetricKind: String, CaseIterable {
-    case cpu, memory, temp, network, disk
+    case cpu, memory, temp, network, disk, minimax5h, minimaxWeekly
 }
 
 /// The live values a menu bar metric may draw from. Each is optional and its
@@ -34,6 +34,8 @@ public struct MenuBarValues {
     public var netUpBytesPerSec: Double?     // MetricsStore.netRates?.upload
     public var diskReadBytesPerSec: Double?  // MetricsStore.diskIO?.read
     public var diskWriteBytesPerSec: Double? // MetricsStore.diskIO?.write
+    public var minimax5hPercent: Int?        // MinimaxSnapshot.fiveHour?.usedPercent 0...100
+    public var minimaxWeeklyPercent: Int?    // MinimaxSnapshot.weekly?.usedPercent 0...100
 
     public init(
         cpuFraction: Double? = nil,
@@ -42,7 +44,9 @@ public struct MenuBarValues {
         netDownBytesPerSec: Double? = nil,
         netUpBytesPerSec: Double? = nil,
         diskReadBytesPerSec: Double? = nil,
-        diskWriteBytesPerSec: Double? = nil
+        diskWriteBytesPerSec: Double? = nil,
+        minimax5hPercent: Int? = nil,
+        minimaxWeeklyPercent: Int? = nil
     ) {
         self.cpuFraction = cpuFraction
         self.memFraction = memFraction
@@ -51,6 +55,8 @@ public struct MenuBarValues {
         self.netUpBytesPerSec = netUpBytesPerSec
         self.diskReadBytesPerSec = diskReadBytesPerSec
         self.diskWriteBytesPerSec = diskWriteBytesPerSec
+        self.minimax5hPercent = minimax5hPercent
+        self.minimaxWeeklyPercent = minimaxWeeklyPercent
     }
 }
 
@@ -88,6 +94,10 @@ public enum MenuBarText {
             guard let read = v.diskReadBytesPerSec, let write = v.diskWriteBytesPerSec else { return nil }
             return MenuBarMetric(label: "读 \(Fmt.rateCompact(read))",
                                  value: "写 \(Fmt.rateCompact(write))", stacked: true)
+        case .minimax5h:
+            return v.minimax5hPercent.map { MenuBarMetric(label: "5h", value: "\($0)%") }
+        case .minimaxWeekly:
+            return v.minimaxWeeklyPercent.map { MenuBarMetric(label: "week", value: "\($0)%") }
         }
     }
 

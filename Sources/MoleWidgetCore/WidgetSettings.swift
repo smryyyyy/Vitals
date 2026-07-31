@@ -73,6 +73,8 @@ public enum WidgetSettings {
     public static let menuBarShowTempKey    = "menuBarShowTemp"
     public static let menuBarShowNetworkKey = "menuBarShowNetwork"
     public static let menuBarShowDiskKey    = "menuBarShowDisk"
+    public static let menuBarShowMinimax5hKey = "menuBarShowMinimax5h"
+    public static let menuBarShowMinimaxWeeklyKey = "menuBarShowMinimaxWeekly"
 
     // CPU/Memory/Temp on by default (the built-in readout); the rest are
     // opt-in so the menu bar stays compact until the user asks for more.

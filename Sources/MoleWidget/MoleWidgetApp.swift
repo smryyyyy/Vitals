@@ -33,6 +33,8 @@ struct MoleWidgetApp: App {
     @AppStorage(WidgetSettings.menuBarShowTempKey)    private var menuBarShowTemp    = WidgetSettings.defaultMenuBarShowTemp
     @AppStorage(WidgetSettings.menuBarShowNetworkKey) private var menuBarShowNetwork = WidgetSettings.defaultMenuBarShowNetwork
     @AppStorage(WidgetSettings.menuBarShowDiskKey)    private var menuBarShowDisk    = WidgetSettings.defaultMenuBarShowDisk
+    @AppStorage(WidgetSettings.menuBarShowMinimax5hKey) private var menuBarShowMinimax5h = false
+    @AppStorage(WidgetSettings.menuBarShowMinimaxWeeklyKey) private var menuBarShowMinimaxWeekly = false
 
     // Settings: section visibility
     @AppStorage(WidgetSettings.showHeaderKey)    private var showHeader    = true
@@ -105,6 +107,8 @@ struct MoleWidgetApp: App {
                     Toggle("CPU 温度", isOn: $menuBarShowTemp)
                     Toggle("网络", isOn: $menuBarShowNetwork)
                     Toggle("磁盘",    isOn: $menuBarShowDisk)
+                    Toggle("MiniMax 5h", isOn: $menuBarShowMinimax5h)
+                    Toggle("MiniMax 周", isOn: $menuBarShowMinimaxWeekly)
                 }
                 Menu("模块") {
                     Toggle("顶部",    isOn: $showHeader)
@@ -123,7 +127,7 @@ struct MoleWidgetApp: App {
             }
             .keyboardShortcut("q")
         } label: {
-            MenuBarLabel(store: appDelegate.store, icon: Self.menuBarIcon)
+            MenuBarLabel(store: appDelegate.store, minimaxManager: appDelegate.minimaxManager, icon: Self.menuBarIcon)
         }
 
     }
@@ -135,6 +139,7 @@ struct MoleWidgetApp: App {
 /// fast-timer updates, so the text refreshes on every sample.
 private struct MenuBarLabel: View {
     let store: MetricsStore
+    let minimaxManager: MinimaxManager
     let icon: NSImage
 
     @AppStorage(WidgetSettings.menuBarShowCPUKey)     private var showCPU     = WidgetSettings.defaultMenuBarShowCPU
@@ -142,6 +147,8 @@ private struct MenuBarLabel: View {
     @AppStorage(WidgetSettings.menuBarShowTempKey)    private var showTemp    = WidgetSettings.defaultMenuBarShowTemp
     @AppStorage(WidgetSettings.menuBarShowNetworkKey) private var showNetwork = WidgetSettings.defaultMenuBarShowNetwork
     @AppStorage(WidgetSettings.menuBarShowDiskKey)    private var showDisk    = WidgetSettings.defaultMenuBarShowDisk
+    @AppStorage(WidgetSettings.menuBarShowMinimax5hKey) private var showMinimax5h = false
+    @AppStorage(WidgetSettings.menuBarShowMinimaxWeeklyKey) private var showMinimaxWeekly = false
 
     var body: some View {
         let values = MenuBarValues(
@@ -151,15 +158,19 @@ private struct MenuBarLabel: View {
             netDownBytesPerSec: store.netRates?.download,
             netUpBytesPerSec: store.netRates?.upload,
             diskReadBytesPerSec: store.diskIO?.read,
-            diskWriteBytesPerSec: store.diskIO?.write
+            diskWriteBytesPerSec: store.diskIO?.write,
+            minimax5hPercent: minimaxManager.snapshot?.fiveHour?.usedPercent,
+            minimaxWeeklyPercent: minimaxManager.snapshot?.weekly?.usedPercent
         )
         let metrics = MenuBarText.metrics(values) { kind in
             switch kind {
-            case .cpu:     return showCPU
-            case .memory:  return showMemory
-            case .temp:    return showTemp
-            case .network: return showNetwork
-            case .disk:    return showDisk
+            case .cpu:           return showCPU
+            case .memory:        return showMemory
+            case .temp:          return showTemp
+            case .network:       return showNetwork
+            case .disk:          return showDisk
+            case .minimax5h:     return showMinimax5h
+            case .minimaxWeekly: return showMinimaxWeekly
             }
         }
         // MenuBarExtra squeezes a custom SwiftUI label to one line and clips its

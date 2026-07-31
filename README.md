@@ -1,7 +1,7 @@
 <h1 align="center">Vitals v0.8.3</h1>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Swift-5.9+-F05138?style=flat-square&logo=swift&logoColor=white" alt="Swift">
+  <img src="https://img.shields.io/badge/Swift-6.0+-F05138?style=flat-square&logo=swift&logoColor=white" alt="Swift">
   <img src="https://img.shields.io/badge/SwiftPM-FA7343?style=flat-square&logo=swift&logoColor=white" alt="SwiftPM">
   <img src="https://img.shields.io/badge/macOS-14+-000000?style=flat-square&logo=apple&logoColor=white" alt="macOS 14+">
   <img src="https://img.shields.io/badge/IOKit-FF6F00?style=flat-square&logo=apple&logoColor=white" alt="IOKit">
@@ -34,6 +34,7 @@
   - 自带"Xh Ym 后重置"倒计时
   - macOS Keychain 安全存 cookie
   - 1/5/15/30/60 分钟可配刷新频率
+  - **菜单栏指标**：可选"5h" / "week" 列显示（参照 CPU/MEM 模式）
 - **SMC CPU 温度**：Apple Silicon die 温度中位数（防单点传感器异常）
 - **极简 SwiftUI 主题**：Catppuccin 配色，3 档字体大小 + 系统/等宽 2 档字体
 - **后台采样能耗优化**：Timer tolerance 让 macOS 合并唤醒
@@ -42,6 +43,7 @@
 ### v0.8.3 (本分支新增)
 
 - 集成 **MiniMax 用量模块**：5h 限额 + 周限额 + 倒计时
+- 菜单栏指标新增 **MiniMax 5h** + **MiniMax 周** 选项（默认关闭，可独立勾选）
 - 集成 **macOS Keychain** 存储 MiniMax 认证（3 个 cookie）
 - **设置面板**支持自定义 MiniMax 刷新间隔（1/5/15/30/60 分钟）
 - **删除 Ko-fi 支持按钮** + **删除 GitHub 链接 / 反馈问题 / 自动检查更新**
@@ -65,7 +67,7 @@
 
 ### 2、自行构建
 
-需要 Xcode 15+ / Swift 5.9+，macOS 14+：
+需要 Xcode 16+ / Swift 6.0+，macOS 14+：
 
 ```bash
 git clone https://github.com/smryyyyy/Vitals.git
@@ -111,6 +113,13 @@ hdiutil create -srcfolder /tmp/vitals_dmg -volname Vitals -o ~/Desktop/Vitals.dm
 | 锁定位置 | 菜单 → 锁定位置（关闭拖拽） |
 | 显示/隐藏 | 菜单 → 显示在桌面（关闭后只显示菜单栏） |
 | 模块开关 | 菜单 → 模块 → 勾选要显示的 section |
+
+### 菜单栏 MiniMax 指标
+
+- 菜单 → 设置 → 菜单栏指标 → 勾选 **MiniMax 5h** / **MiniMax 周**
+- 菜单栏图标会按 `5h / 13%` 或 `week / 45%` 形式显示当前用量
+- 默认关闭（避免菜单栏过长）
+- 刷新频率跟随设置面板（默认 5 分钟）
 
 ### MiniMax 刷新策略
 
@@ -176,13 +185,13 @@ Vitals/
 
 | 组件 | 用途 |
 |------|------|
-| Swift 5.9+ / SwiftUI | 主 UI + 桌面浮窗 |
+| Swift 6.0+ / SwiftUI | 主 UI + 桌面浮窗 |
 | AppKit (NSWindow / NSHostingView) | 浮窗层级 / 透明度 / 鼠标事件 |
 | IOKit (mach / IOBlockStorageDriver) | CPU/内存/磁盘原始采集 |
 | SystemConfiguration (SCDynamicStore) | 网络接口信息 |
 | libproc (proc_listallpids) | 进程 CPU/内存 |
 | AppleSMC kernel API | CPU die 温度 |
-| @Observable (Swift 5.9) | 响应式数据流 |
+| @Observable (Swift 5.9+) | 响应式数据流 |
 | URLSession async/await | MiniMax API |
 | Security framework (SecItem) | Keychain |
 | Sparkle (已移除) | (历史) 自更新 |
@@ -210,6 +219,19 @@ Apple Silicon 才有 SMC 温度传感器。Intel Mac / 沙盒化进程拿不到�
 ### 想编译报错 "cannot find 'Sparkle'"
 
 本分支已删除 Sparkle 依赖。如果 fork 自早期版本，先 `make clean` 再 build。
+
+### 菜单栏 MiniMax 不显示
+
+先在 菜单 → 设置 → 菜单栏指标 勾选 **MiniMax 5h** 或 **MiniMax 周**。
+未勾选时默认不显示，避免菜单栏过长。
+
+### Cookie 提取脚本
+
+`Scripts/extract-minimax-cookies.js` 可以在 Chrome Console 跑，但 **`_token` / `HERTZ-SESSION` 是 HttpOnly，JS 拿不到**——浏览器安全机制。脚本**只能**列出非 HttpOnly 的 cookie。
+
+**最稳方法**：F12 → Network → Copy as cURL (bash) → 整段贴给颜颜。
+
+完整说明 + Bookmarklet（保存为书签一键跑）见 [`Scripts/extract-minimax-cookies.md`](Scripts/extract-minimax-cookies.md)。
 
 ---
 

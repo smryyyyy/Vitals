@@ -1,2 +1,87 @@
-Scripts/.DS_Store
+# ──────────────────────────────────────────────────────────────
+# Vitals — macOS 桌面浮窗系统监控
+# ──────────────────────────────────────────────────────────────
+
+# macOS
 .DS_Store
+._*
+.Spotlight-V100
+.Trashes
+.AppleDouble
+.LSOverride
+
+# Build artifacts
+dist/
+build/
+*.dmg
+*.app/
+*.ipa
+*.pkg
+
+# Swift Package Manager
+# (we have no dependencies, but these are common for future-proofing)
+.build/
+.swiftpm/
+Packages/
+Package.pins
+# NOTE: Package.resolved is INTENTIONALLY TRACKED so other devs / CI get
+# a reproducible build with the same dependency versions. Without it
+# SwiftPM can pull a different minor version of a dependency.
+# (Commented out to keep it tracked.)
+
+# Xcode
+xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+*.moved-aside
+DerivedData/
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+
+# Compiled object / intermediate
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.pcm
+*.dia
+
+# Code coverage / profiling
+*.gcda
+*.gcno
+*.gcov
+*.dSYM.zip
+*.dSYM
+*.profdata
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store?
+
+# Build logs
+*.log
+
+# OS-specific junk
+ehthumbs.db
+ehthumbs_vista.db
+Thumbs.db
+Desktop.ini
+
+# Sensitive / credentials
+# (Vitals stores MiniMax cookies in macOS Keychain, never on disk.
+#  If you ever want a config file, add it here.)
+*.env
+.env
+secrets/
+credentials/
