@@ -37,7 +37,7 @@
 - **后台采样能耗优化**：Timer tolerance 让 macOS 合并唤醒
 - **启动时间锁保护**：killStaleWidgetProcess 启动时清旧进程
 
-### v0.8.3 (本分支新增)
+### 本分支新增
 
 - 集成 **MiniMax 用量模块**：5h 限额 + 周限额 + 倒计时
 - 集成 **macOS Keychain** 存储 MiniMax 认证（3 个 cookie）
