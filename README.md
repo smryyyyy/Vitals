@@ -158,8 +158,7 @@ Vitals/
 │   ├── AppIcon.icns
 │   └── Info.plist
 ├── Scripts/
-│   ├── make-icon.swift                # 图标生成
-│   └── extract-minimax-cookies.*      # 抓 cookie 辅助
+│   └── make-icon.swift                # 图标生成
 ├── Tests/
 │   └── MoleWidgetCoreTests/ (16 文件)
 ├── Package.swift                       # SwiftPM 入口
