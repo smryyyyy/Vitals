@@ -48,7 +48,6 @@
 - **桌面浮窗标题栏删除**（Vitals 名 + S/M/L 按钮 + 锁定 + 隐藏）
 - **所有用户可见英文 → 中文硬编码翻译**（菜单/标签/帮助/单位）
 - **电源状态修复**：用 AppleSmartBattery 注册表替换 IOKit IOPS API（解决 macOS 26 缓存不一致问题）
-- **Core N 翻译**（"核心 1" 代替 "Core 1"）
 - **App Group ID 简化**：使用 hardcoded 容器路径替代 App Groups（更简单的安装流程）
 
 ---
