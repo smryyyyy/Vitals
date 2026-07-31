@@ -221,14 +221,6 @@ Apple Silicon 才有 SMC 温度传感器。Intel Mac / 沙盒化进程拿不到�
 先在 菜单 → 设置 → 菜单栏指标 勾选 **MiniMax 5h** 或 **MiniMax 周**。
 未勾选时默认不显示，避免菜单栏过长。
 
-### Cookie 提取脚本
-
-`Scripts/extract-minimax-cookies.js` 可以在 Chrome Console 跑，但 **`_token` / `HERTZ-SESSION` 是 HttpOnly，JS 拿不到**——浏览器安全机制。脚本**只能**列出非 HttpOnly 的 cookie。
-
-**最稳方法**：F12 → Network → Copy as cURL (bash) → 整段贴给颜颜。
-
-完整说明 + Bookmarklet（保存为书签一键跑）见 [`Scripts/extract-minimax-cookies.md`](Scripts/extract-minimax-cookies.md)。
-
 ---
 
 ## 许可证
