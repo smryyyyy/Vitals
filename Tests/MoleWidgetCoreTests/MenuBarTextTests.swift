@@ -28,7 +28,7 @@ import Testing
     @Test func classicThree() {
         let values = MenuBarValues(cpuFraction: 0.423, memFraction: 0.34, temperatureC: 54.4)
         #expect(pairs(MenuBarText.metrics(values, enabled: on(.cpu, .memory, .temp)))
-            == ["CPU 42%", "MEM 34%", "TEMP 54°"])
+            == ["CPU 42%", "内存 34%", "温度 54°"])
     }
 
     @Test func allEnabledButNoData_returnsEmpty() {
@@ -39,7 +39,7 @@ import Testing
         // Temp enabled but absent → dropped, others remain.
         let values = MenuBarValues(cpuFraction: 0.42, memFraction: 0.34, temperatureC: nil)
         #expect(pairs(MenuBarText.metrics(values, enabled: on(.cpu, .memory, .temp)))
-            == ["CPU 42%", "MEM 34%"])
+            == ["CPU 42%", "内存 34%"])
     }
 
     @Test func cpuPercent_rounds() {
@@ -51,7 +51,7 @@ import Testing
 
     @Test func tempOnly_rounds() {
         #expect(pairs(MenuBarText.metrics(MenuBarValues(temperatureC: 30.6), enabled: on(.temp)))
-            == ["TEMP 31°"])
+            == ["温度 31°"])
     }
 
     @Test func network_isOneStackedMetric() {
@@ -81,8 +81,8 @@ import Testing
         let metrics = MenuBarText.metrics(values, enabled: on(.disk))
         #expect(metrics.count == 1)
         #expect(metrics[0].stacked)
-        #expect(metrics[0].label == "R 2.0M")
-        #expect(metrics[0].value == "W 1.0M")
+        #expect(metrics[0].label == "读 2.0M")
+        #expect(metrics[0].value == "写 1.0M")
     }
 
     @Test func canonicalOrder_regardlessOfEnableOrder() {
@@ -97,6 +97,46 @@ import Testing
         #expect(metrics.map(\.stacked) == [false, false, false, true, true])
         #expect(metrics[0].label == "CPU")
         #expect(metrics[3].label == "↓ 1.0M")   // network
-        #expect(metrics[4].label == "R 1.0M")   // disk
+        #expect(metrics[4].label == "读 1.0M")   // disk
+    }
+
+    @Test func salary_metric_renders() {
+        // salaryToday provided → "工资 <cnyCompact>" appears.
+        let values = MenuBarValues(salaryToday: 1234.5)
+        #expect(pairs(MenuBarText.metrics(values, enabled: on(.salary)))
+            == ["工资 1.2k"])
+    }
+
+    @Test func salary_metric_absent_isOmitted() {
+        // nil salaryToday → metric dropped, even when enabled.
+        let values = MenuBarValues(cpuFraction: 0.5)
+        #expect(MenuBarText.metrics(values, enabled: on(.salary)).isEmpty)
+    }
+
+    @Test func minimax_metrics_render() {
+        let values = MenuBarValues(minimax5hPercent: 13, minimaxWeeklyPercent: 45)
+        let metrics = MenuBarText.metrics(values, enabled: on(.minimax5h, .minimaxWeekly))
+        #expect(pairs(metrics) == ["5h 13%", "week 45%"])
+    }
+
+    @Test func canonicalOrder_includesNewKindsWhenProvided() {
+        // When all 8 kinds carry a value, the fixed order ends at index 7
+        // (cpu, memory, temp, network, disk, minimax5h, minimaxWeekly, salary).
+        let values = MenuBarValues(
+            cpuFraction: 0.1, memFraction: 0.2, temperatureC: 40,
+            netDownBytesPerSec: 1_048_576, netUpBytesPerSec: 1_048_576,
+            diskReadBytesPerSec: 1_048_576, diskWriteBytesPerSec: 1_048_576,
+            minimax5hPercent: 13, minimaxWeeklyPercent: 45,
+            salaryToday: 1234.5
+        )
+        let metrics = MenuBarText.metrics(values, enabled: allOn)
+        #expect(metrics.count == 8)
+        #expect(metrics.map(\.stacked) == [false, false, false, true, true, false, false, false])
+        #expect(metrics[5].label == "5h")
+        #expect(metrics[5].value == "13%")
+        #expect(metrics[6].label == "week")
+        #expect(metrics[6].value == "45%")
+        #expect(metrics[7].label == "工资")
+        #expect(metrics[7].value == "1.2k")
     }
 }

@@ -40,10 +40,10 @@ import Testing
 
     @Test func usedFreePair() {
         // ≥ 10 GiB — no fractional part (mo style: "164G")
-        #expect(Fmt.usedFreePair(used: 175_973_534_106, free: 318_372_188_979) == "164G used · 297G free")
+        #expect(Fmt.usedFreePair(used: 175_973_534_106, free: 318_372_188_979) == "164G 已用 · 297G 空闲")
         // < 10 GiB — one decimal digit
-        #expect(Fmt.usedFreePair(used: 5_368_709_120, free: 17_179_869_184) == "5.0G used · 16G free")
-        #expect(Fmt.usedFreePair(used: 0, free: 0) == "0.0G used · 0.0G free")
+        #expect(Fmt.usedFreePair(used: 5_368_709_120, free: 17_179_869_184) == "5.0G 已用 · 16G 空闲")
+        #expect(Fmt.usedFreePair(used: 0, free: 0) == "0.0G 已用 · 0.0G 空闲")
     }
 
     @Test func readWritePair() {

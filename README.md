@@ -1,4 +1,4 @@
-<h1 align="center">Vitals v1.0.0</h1>
+<h1 align="center">Vitals v1.1.0</h1>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Swift-6.0+-F05138?style=flat-square&logo=swift&logoColor=white" alt="Swift">
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  macOS 桌面浮窗系统监控 + MiniMax 用量面板 — CPU / 内存 / 磁盘 / 网络 / 电源 / 进程实时采集。<br>
+  macOS 桌面浮窗系统监控 + MiniMax 用量面板 + 实时工资看板 — CPU / 内存 / 磁盘 / 网络 / 电源 / 进程 / 工资 七大模块实时数据。<br>
   <b>支持拖拽、缩放、锁位置、模块开关，菜单栏常驻。</b>
 </p>
 
@@ -20,19 +20,20 @@
 
 - **桌面浮窗**：always-on-top 浮窗，可拖拽 + 缩放，锁位置
 - **菜单栏常驻**：MenuBarExtra 实时显示 CPU/内存/网络/磁盘指标
-- **六大模块**（可独立开关）：
+- **七大模块**（可独立开关）：
   - **CPU**：总占用 + 温度 + Top 3 核心 + 负载 + 趋势 sparkline
   - **内存**：已用/空闲/缓存/可用 + 分级配色
   - **磁盘**：占用 + I/O 速度（IOKit IOBlockStorageDriver）
   - **网络**：下载/上传速率 + 接口名 + IP
   - **电源**：电量 + 健康度 + 充放电状态 + 电池温度
   - **进程**：Top 3 进程按 CPU
+  - **工资**：实时显示今日已赚 / 本月累计 / 本年累计 / 在职累计，支持税后月薪、上下班时间、午休时段、工作模式设置，按中国法定节假日 + 调休自动算月工作日
 - **MiniMax 用量集成**：
   - 5h 限额 + 周限额实时查询
   - 自带"Xh Ym 后重置"倒计时
   - macOS Keychain 安全存 cookie
   - 1/5/15/30/60 分钟可配刷新频率
-  - **菜单栏指标**：可选"5h" / "week" 列显示（参照 CPU/MEM 模式）
+  - **菜单栏指标**：可选 "5h" / "week" / "工资" 列显示（参照 CPU/MEM 模式）
 - **SMC CPU 温度**：Apple Silicon die 温度中位数（防单点传感器异常）
 - **极简 SwiftUI 主题**：Catppuccin 配色，3 档字体大小 + 系统/等宽 2 档字体
 - **后台采样能耗优化**：Timer tolerance 让 macOS 合并唤醒
@@ -51,6 +52,12 @@
 - **所有用户可见英文 → 中文硬编码翻译**（菜单/标签/帮助/单位）
 - **电源状态修复**：用 AppleSmartBattery 注册表替换 IOKit IOPS API（解决 macOS 26 缓存不一致问题）
 - **App Group ID 简化**：使用 hardcoded 容器路径替代 App Groups（更简单的安装流程）
+- 集成 **实时工资模块**：今日已赚 / 本月累计 / 本年累计 / 在职累计，1 秒刷新
+- 集成 **中国法定节假日 + 调休表**：2024-2026 内嵌，2027+ 兜底 + UI 警告
+- 桌面浮窗 **工资 section 固定第一列**，占整列（其它模块双列）
+- 菜单栏指标新增 **工资** 选项（默认关闭，可独立勾选）
+- **税后月薪** 输入 + **午休是否计入** 开关 + **入职日期** 自动算在职累计
+- 53 个 SalaryEngineTests 单元测试
 
 ---
 
@@ -155,7 +162,7 @@ Vitals/
 │       ├── Processes/ (Collector + Math + Types)
 │       ├── System/ (SystemInfo + HealthScore)
 │       ├── Formatting/ (Fmt + MenuBarText)
-│       ├── Views/ (10 个 UI 组件)
+│       ├── Views/ (12 个 UI 组件,含 Salary section/settings)
 │       ├── Store/MetricsStore.swift   # @MainActor @Observable 中央数据 store
 │       └── MiniMax/                    # MiniMax 集成 (5 个文件)
 │           ├── MinimaxTypes.swift
@@ -163,13 +170,18 @@ Vitals/
 │           ├── MinimaxMapper.swift    # JSON → Snapshot
 │           ├── MinimaxKeychain.swift  # macOS Keychain 凭据存储
 │           └── MinimaxManager.swift   # @MainActor @Observable 5min 定时器
+│       └── Salary/                    # 实时工资模块 (4 个文件)
+│           ├── SalaryTypes.swift      # SalarySettings / SalarySnapshot / SalaryState
+│           ├── SalaryEngine.swift     # 纯计算引擎
+│           ├── SalaryManager.swift    # @MainActor @Observable 1秒定时器
+│           └── ChineseWorkdayCalendar.swift  # 国务院 2024-2026 放假调休表
 ├── Resources/
 │   ├── AppIcon.icns
 │   └── Info.plist
 ├── Scripts/
 │   └── make-icon.swift                # 图标生成
 ├── Tests/
-│   └── MoleWidgetCoreTests/ (16 文件)
+│   └── MoleWidgetCoreTests/ (17 文件)
 ├── Package.swift                       # SwiftPM 入口
 ├── Makefile                            # 打包 .app
 └── README.md
@@ -221,6 +233,10 @@ Apple Silicon 才有 SMC 温度传感器。Intel Mac / 沙盒化进程拿不到�
 先在 菜单 → 设置 → 菜单栏指标 勾选 **MiniMax 5h** 或 **MiniMax 周**。
 未勾选时默认不显示，避免菜单栏过长。
 
+### 工资 section 显示"节假日表已过期"
+
+内嵌的中国法定节假日表覆盖 2024-2026 三年（来自国务院办公厅通知原文）。2027 年起系统会走默认"周一~五"规则，并在浮窗顶部 + 设置页加红字提示。**手动更新**：每年 12 月等国务院发新通知后，把数据追加到 `Sources/MoleWidgetCore/Salary/ChineseWorkdayCalendar.swift` 的 table 字典，然后 `make build` 重新打包。
+
 ---
 
 ## 许可证
@@ -240,6 +256,8 @@ MIT License
 - 删除"用量历史"窗口
 - 集成 MiniMax 用量 API（5h + 周 + 倒计时）
 - macOS Keychain 存储凭据
+- 集成中国法定节假日表（2024-2026 国务院办公厅通知原文）
+- 集成"实时工资"模块（本地纯计算，1秒刷新）
 
 ---
 

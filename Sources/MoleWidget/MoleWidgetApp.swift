@@ -35,6 +35,7 @@ struct MoleWidgetApp: App {
     @AppStorage(WidgetSettings.menuBarShowDiskKey)    private var menuBarShowDisk    = WidgetSettings.defaultMenuBarShowDisk
     @AppStorage(WidgetSettings.menuBarShowMinimax5hKey) private var menuBarShowMinimax5h = false
     @AppStorage(WidgetSettings.menuBarShowMinimaxWeeklyKey) private var menuBarShowMinimaxWeekly = false
+    @AppStorage(WidgetSettings.menuBarShowSalaryKey) private var menuBarShowSalary = WidgetSettings.defaultMenuBarShowSalary
 
     // Settings: section visibility
     @AppStorage(WidgetSettings.showHeaderKey)    private var showHeader    = true
@@ -45,6 +46,7 @@ struct MoleWidgetApp: App {
     @AppStorage(WidgetSettings.showNetworkKey)   private var showNetwork   = true
     @AppStorage(WidgetSettings.showProcessesKey) private var showProcesses = true
     @AppStorage(WidgetSettings.showMinimaxKey)   private var showMinimax   = true
+    @AppStorage(WidgetSettings.showSalaryKey)    private var showSalary    = WidgetSettings.defaultShowSalary
 
     /// Monochrome template glyph echoing the app icon: four bars of varying
     /// length. Template images get tinted by macOS for light/dark menu bars.
@@ -73,6 +75,9 @@ struct MoleWidgetApp: App {
             Divider()
             Button("MiniMax 设置…") {
                 appDelegate.openMinimaxSettings()
+            }
+            Button("工资设置…") {
+                appDelegate.openSalarySettings()
             }
             Toggle("锁定位置", isOn: $positionLocked)
             Toggle("显示在桌面", isOn: $widgetVisible)
@@ -109,6 +114,7 @@ struct MoleWidgetApp: App {
                     Toggle("磁盘",    isOn: $menuBarShowDisk)
                     Toggle("MiniMax 5h", isOn: $menuBarShowMinimax5h)
                     Toggle("MiniMax 周", isOn: $menuBarShowMinimaxWeekly)
+                    Toggle("工资", isOn: $menuBarShowSalary)
                 }
                 Menu("模块") {
                     Toggle("顶部",    isOn: $showHeader)
@@ -119,6 +125,7 @@ struct MoleWidgetApp: App {
                     Toggle("网络",   isOn: $showNetwork)
                     Toggle("进程", isOn: $showProcesses)
                     Toggle("MiniMax", isOn: $showMinimax)
+                    Toggle("工资", isOn: $showSalary)
                 }
             }
             Divider()
@@ -127,7 +134,7 @@ struct MoleWidgetApp: App {
             }
             .keyboardShortcut("q")
         } label: {
-            MenuBarLabel(store: appDelegate.store, minimaxManager: appDelegate.minimaxManager, icon: Self.menuBarIcon)
+            MenuBarLabel(store: appDelegate.store, minimaxManager: appDelegate.minimaxManager, salaryManager: appDelegate.salaryManager, icon: Self.menuBarIcon)
         }
 
     }
@@ -140,6 +147,7 @@ struct MoleWidgetApp: App {
 private struct MenuBarLabel: View {
     let store: MetricsStore
     let minimaxManager: MinimaxManager
+    let salaryManager: SalaryManager
     let icon: NSImage
 
     @AppStorage(WidgetSettings.menuBarShowCPUKey)     private var showCPU     = WidgetSettings.defaultMenuBarShowCPU
@@ -149,6 +157,7 @@ private struct MenuBarLabel: View {
     @AppStorage(WidgetSettings.menuBarShowDiskKey)    private var showDisk    = WidgetSettings.defaultMenuBarShowDisk
     @AppStorage(WidgetSettings.menuBarShowMinimax5hKey) private var showMinimax5h = false
     @AppStorage(WidgetSettings.menuBarShowMinimaxWeeklyKey) private var showMinimaxWeekly = false
+    @AppStorage(WidgetSettings.menuBarShowSalaryKey) private var showSalary = WidgetSettings.defaultMenuBarShowSalary
 
     var body: some View {
         let values = MenuBarValues(
@@ -160,7 +169,8 @@ private struct MenuBarLabel: View {
             diskReadBytesPerSec: store.diskIO?.read,
             diskWriteBytesPerSec: store.diskIO?.write,
             minimax5hPercent: minimaxManager.snapshot?.fiveHour?.usedPercent,
-            minimaxWeeklyPercent: minimaxManager.snapshot?.weekly?.usedPercent
+            minimaxWeeklyPercent: minimaxManager.snapshot?.weekly?.usedPercent,
+            salaryToday: salaryManager.snapshot.state == .unconfigured ? nil : salaryManager.snapshot.todayEarned
         )
         let metrics = MenuBarText.metrics(values) { kind in
             switch kind {
@@ -171,6 +181,7 @@ private struct MenuBarLabel: View {
             case .disk:          return showDisk
             case .minimax5h:     return showMinimax5h
             case .minimaxWeekly: return showMinimaxWeekly
+            case .salary:        return showSalary
             }
         }
         // MenuBarExtra squeezes a custom SwiftUI label to one line and clips its
@@ -307,8 +318,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: DesktopWindow?
     let store = MetricsStore()
     let minimaxManager = MinimaxManager()
+    let salaryManager = SalaryManager()
     private var minimaxWindow: NSWindow?
     private var minimaxSettingsHost: NSHostingController<MinimaxSettingsView>?
+    private var salaryWindow: NSWindow?
+    private var salarySettingsHost: NSHostingController<SalarySettingsView>?
 
 
     /// Tracks the last refresh interval seen in UserDefaults so we can detect changes.
@@ -328,6 +342,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         store.start()
         minimaxManager.start()
+        salaryManager.start()
 
         let window = DesktopWindow(
             contentRect: NSRect(x: 0, y: 0, width: 520, height: 300),
@@ -345,7 +360,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.backgroundColor = .clear
         window.isOpaque = false
         window.hasShadow = false
-        let hostingView = WidgetHostingView(rootView: WidgetRootView(store: store, minimaxManager: minimaxManager))
+        let hostingView = WidgetHostingView(rootView: WidgetRootView(store: store, minimaxManager: minimaxManager, salaryManager: salaryManager))
         window.contentView = hostingView
         // Fit the window exactly to its content: extra transparent area
         // would capture clicks outside the visible widget
@@ -469,8 +484,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.minimaxWindow = window
     }
 
+    /// Opens (or reuses) a single non-activating settings window for the
+    /// salary module — mirrors `openMinimaxSettings` but with a taller frame
+    /// to fit the form-style settings view.
+    func openSalarySettings() {
+        if let window = salaryWindow {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        let host = NSHostingController(rootView: SalarySettingsView(
+            manager: salaryManager,
+            onCancel: { [weak self] in
+                self?.salaryWindow?.close()
+            }
+        ))
+        self.salarySettingsHost = host
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 520),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentViewController = host
+        window.title = "工资设置"
+        window.isReleasedWhenClosed = false
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        self.salaryWindow = window
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         store.stop()
         minimaxManager.stop()
+        salaryManager.stop()
     }
 }

@@ -75,6 +75,7 @@ public enum WidgetSettings {
     public static let menuBarShowDiskKey    = "menuBarShowDisk"
     public static let menuBarShowMinimax5hKey = "menuBarShowMinimax5h"
     public static let menuBarShowMinimaxWeeklyKey = "menuBarShowMinimaxWeekly"
+    public static let menuBarShowSalaryKey = "menuBarShowSalary"
 
     // CPU/Memory/Temp on by default (the built-in readout); the rest are
     // opt-in so the menu bar stays compact until the user asks for more.
@@ -84,6 +85,7 @@ public enum WidgetSettings {
     public static let defaultMenuBarShowTemp    = true
     public static let defaultMenuBarShowNetwork = false
     public static let defaultMenuBarShowDisk    = false
+    public static let defaultMenuBarShowSalary  = false  // 菜单栏指标默认关,避免太挤
 
     // MARK: - Section visibility
 
@@ -95,6 +97,11 @@ public enum WidgetSettings {
     public static let showNetworkKey   = "showNetwork"
     public static let showProcessesKey = "showProcesses"
     public static let showMinimaxKey   = "showMinimax"
+    public static let showSalaryKey    = "showSalary"
+
+    // Salary section defaults to on (it occupies a slot of its own; turning
+    // it off hides the entire section).
+    public static let defaultShowSalary: Bool = true
 
     // MARK: - MiniMax refresh interval
 

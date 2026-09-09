@@ -41,6 +41,22 @@ public enum Fmt {
         "R \(rateNumber(read)) · W \(rateNumber(write)) MB/s"
     }
 
+    /// Compact CNY for the menu bar: "1.2k" / "523" / "0.5".
+    /// ≥ 1 000 000 → "1.2M", ≥ 1 000 → "1.2k", ≥ 100 → "523", else "0.5".
+    public static func cnyCompact(_ amount: Double) -> String {
+        let a = Swift.abs(amount)
+        if a >= 1_000_000 {
+            return String(format: "%.1fM", amount / 1_000_000)
+        }
+        if a >= 1_000 {
+            return String(format: "%.1fk", amount / 1_000)
+        }
+        if a >= 100 {
+            return String(format: "%.0f", amount)
+        }
+        return String(format: "%.1f", amount)
+    }
+
     private static func gigabytesNumber(_ bytes: UInt64) -> String {
         String(format: "%.1f", Double(bytes) / 1_073_741_824.0)
     }

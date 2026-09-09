@@ -21,7 +21,7 @@ public struct MenuBarMetric: Equatable {
 /// A metric that can be shown in the menu bar, in canonical display order.
 /// `network` and `disk` each pair two directions in one stacked column.
 public enum MenuBarMetricKind: String, CaseIterable {
-    case cpu, memory, temp, network, disk, minimax5h, minimaxWeekly
+    case cpu, memory, temp, network, disk, minimax5h, minimaxWeekly, salary
 }
 
 /// The live values a menu bar metric may draw from. Each is optional and its
@@ -36,6 +36,7 @@ public struct MenuBarValues {
     public var diskWriteBytesPerSec: Double? // MetricsStore.diskIO?.write
     public var minimax5hPercent: Int?        // MinimaxSnapshot.fiveHour?.usedPercent 0...100
     public var minimaxWeeklyPercent: Int?    // MinimaxSnapshot.weekly?.usedPercent 0...100
+    public var salaryToday: Double?          // SalaryManager.snapshot.todayEarned (元); nil = 未配置
 
     public init(
         cpuFraction: Double? = nil,
@@ -46,7 +47,8 @@ public struct MenuBarValues {
         diskReadBytesPerSec: Double? = nil,
         diskWriteBytesPerSec: Double? = nil,
         minimax5hPercent: Int? = nil,
-        minimaxWeeklyPercent: Int? = nil
+        minimaxWeeklyPercent: Int? = nil,
+        salaryToday: Double? = nil
     ) {
         self.cpuFraction = cpuFraction
         self.memFraction = memFraction
@@ -57,6 +59,7 @@ public struct MenuBarValues {
         self.diskWriteBytesPerSec = diskWriteBytesPerSec
         self.minimax5hPercent = minimax5hPercent
         self.minimaxWeeklyPercent = minimaxWeeklyPercent
+        self.salaryToday = salaryToday
     }
 }
 
@@ -98,6 +101,8 @@ public enum MenuBarText {
             return v.minimax5hPercent.map { MenuBarMetric(label: "5h", value: "\($0)%") }
         case .minimaxWeekly:
             return v.minimaxWeeklyPercent.map { MenuBarMetric(label: "week", value: "\($0)%") }
+        case .salary:
+            return v.salaryToday.map { MenuBarMetric(label: "工资", value: Fmt.cnyCompact($0)) }
         }
     }
 

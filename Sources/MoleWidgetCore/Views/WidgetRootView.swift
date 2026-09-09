@@ -6,7 +6,7 @@ import SwiftUI
 /// Ordered list of section slots. The order is fixed; visibility flags select which
 /// slots appear in the grid. Using an enum makes ForEach ids stable and unique.
 enum WidgetSection: Int, CaseIterable, Identifiable {
-    case cpu, memory, disk, power, network, processes, minimax
+    case cpu, memory, disk, power, network, processes, minimax, salary
     var id: Int { rawValue }
 }
 
@@ -20,6 +20,7 @@ enum WidgetSection: Int, CaseIterable, Identifiable {
 public struct WidgetRootView: View {
     let store: MetricsStore
     let minimaxManager: MinimaxManager
+    let salaryManager: SalaryManager
 
     @AppStorage(WidgetSettings.positionLockedKey) private var positionLocked = false
     @AppStorage(WidgetSettings.widgetVisibleKey) private var widgetVisible = true
@@ -42,6 +43,7 @@ public struct WidgetRootView: View {
     @AppStorage(WidgetSettings.showNetworkKey)   private var showNetwork   = true
     @AppStorage(WidgetSettings.showProcessesKey) private var showProcesses = true
     @AppStorage(WidgetSettings.showMinimaxKey)   private var showMinimax   = true
+    @AppStorage(WidgetSettings.showSalaryKey)    private var showSalary    = WidgetSettings.defaultShowSalary
 
     @State private var dragStartWidth: Double?
 
@@ -61,15 +63,17 @@ public struct WidgetRootView: View {
             case .network:   return showNetwork
             case .processes: return showProcesses
             case .minimax:   return showMinimax
+            case .salary:    return showSalary
             }
         }
     }
 
 
 
-    public init(store: MetricsStore, minimaxManager: MinimaxManager) {
+    public init(store: MetricsStore, minimaxManager: MinimaxManager, salaryManager: SalaryManager) {
         self.store = store
         self.minimaxManager = minimaxManager
+        self.salaryManager = salaryManager
     }
 
     public var body: some View {
@@ -86,23 +90,23 @@ public struct WidgetRootView: View {
                     HeaderView(info: store.systemInfo, score: store.healthScore)
                 }
 
-                if !enabledSections.isEmpty {
+                // 工资 section 永远占整列(显示在最上方),其它 section 走双列 grid
+                if showSalary {
+                    SalarySectionView(snapshot: salaryManager.snapshot, settings: salaryManager.settings).equatable()
+                }
+
+                let others = enabledSections.filter { $0 != .salary }
+                if !others.isEmpty {
                     Grid(alignment: .topLeading, horizontalSpacing: 24, verticalSpacing: 16) {
-                        // Chunk the enabled sections into pairs; the odd tail sits alone.
-                        // Row identity = leading section, so rows keep stable identity
-                        // when other sections are toggled on/off.
-                        let pairs = enabledSections.chunks(of: 2)
+                        let pairs = others.chunks(of: 2)
                         ForEach(pairs, id: \.[0].id) { pair in
                             GridRow {
-                                // Leading cell (always present)
                                 sectionView(for: pair[0])
                                     .frame(width: columnWidth, alignment: .topLeading)
-                                // Trailing cell (present only in full pairs)
                                 if pair.count > 1 {
                                     sectionView(for: pair[1])
                                         .frame(width: columnWidth, alignment: .topLeading)
                                 } else {
-                                    // Empty spacer to keep the grid geometry consistent
                                     Color.clear
                                         .frame(width: columnWidth)
                                 }
@@ -146,6 +150,8 @@ public struct WidgetRootView: View {
             ProcessesSectionView(processes: store.topProcesses).equatable()
         case .minimax:
             MinimaxSectionView(snapshot: minimaxManager.snapshot).equatable()
+        case .salary:
+            SalarySectionView(snapshot: salaryManager.snapshot, settings: salaryManager.settings).equatable()
         }
     }
 
