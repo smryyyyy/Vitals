@@ -195,12 +195,40 @@ public enum SalaryEngine {
 
     // MARK: - 累计
 
+    /// 今日已工作进度(0..1),跟 `compute()` 里的 progress 算法完全一致。
+    /// 用于累计计算中"今天已经赚了多少"的部分,让累计按秒级增长,
+    /// 跟 `todayEarned` 同步。不调 `compute()`(避免死循环)。
+    private static func todayProgressFraction(settings: SalarySettings, now: Date) -> Double {
+        let cal = ChineseWorkdayCalendar.calendar
+        let todayStart = cal.startOfDay(for: now)
+        let clockIn = todayAt(minute: settings.clockInMinute, on: todayStart)
+        let lunchStart = todayAt(minute: settings.lunchStartMinute, on: todayStart)
+        let lunchEnd = todayAt(minute: settings.lunchEndMinute, on: todayStart)
+
+        let totalWorkMinutes = max(0, settings.clockOutMinute - settings.clockInMinute)
+        let lunchMinutes = settings.includeLunchInEarnings ? 0 : max(0, settings.lunchEndMinute - settings.lunchStartMinute)
+        let todayTotalSeconds = max(0, totalWorkMinutes - lunchMinutes) * 60
+        guard todayTotalSeconds > 0 else { return 0 }
+
+        let worked = workedSeconds(
+            now: now.timeIntervalSinceReferenceDate,
+            clockIn: clockIn.timeIntervalSinceReferenceDate,
+            lunchStart: lunchStart.timeIntervalSinceReferenceDate,
+            lunchEnd: lunchEnd.timeIntervalSinceReferenceDate,
+            includeLunch: settings.includeLunchInEarnings
+        )
+        return min(1.0, max(0.0, worked / Double(todayTotalSeconds)))
+    }
+
     /// 今年已赚:按月分段,每月用当月 workdays 算。
+    /// 每个月 = 完整过去日 × 日薪,当前月额外加"今日 progress × 日薪",
+    /// 让累计按秒级增长,跟 todayEarned 同步。
     /// 表外年份会回退到"周一~五"默认规则,UI 通过 snapshot.tableExpired 提示升级。
     public static func yearEarned(settings: SalarySettings, now: Date) -> Double {
         let cal = ChineseWorkdayCalendar.calendar
         let nowYear = cal.component(.year, from: now)
         let nowMonth = cal.component(.month, from: now)
+        let todayStart = cal.startOfDay(for: now)
 
         var total: Double = 0
         for m in 1...nowMonth {
@@ -208,31 +236,60 @@ public enum SalaryEngine {
                   let monthEnd = cal.date(byAdding: .month, value: 1, to: monthStart) else { continue }
             let totalWorkdays = ChineseWorkdayCalendar.monthWorkdays(year: nowYear, month: m)
             guard totalWorkdays > 0 else { continue }
-            let periodEnd = (m == nowMonth) ? now : monthEnd
-            let worked = ChineseWorkdayCalendar.workdaysBetween(from: monthStart, to: periodEnd)
-            total += settings.monthlyNetSalary * Double(worked) / Double(totalWorkdays)
+
+            // periodEnd:完整过去月到月底,当前月到 todayStart(不含今天)
+            let completePeriodEnd: Date
+            if m < nowMonth {
+                completePeriodEnd = monthEnd  // 完整过去月
+            } else if m == nowMonth {
+                completePeriodEnd = todayStart  // 当前月:月初到昨天
+            } else {
+                continue
+            }
+
+            let completeDaysWorked = ChineseWorkdayCalendar.workdaysBetween(from: monthStart, to: completePeriodEnd)
+            total += settings.monthlyNetSalary * Double(completeDaysWorked) / Double(totalWorkdays)
         }
+
+        // 当前月今日 progress(只在今天工作日时加,休息日不加)
+        if ChineseWorkdayCalendar.isWorkday(now) {
+            let todayDaily = dailySalary(settings: settings, now: now)
+            total += todayDaily * todayProgressFraction(settings: settings, now: now)
+        }
+
         return total
     }
 
-    /// 本月已赚:从月初到 min(now, 下月初)。
+    /// 本月已赚:月初到昨天(完整过去日) × 日薪 + 今日 progress × 日薪。
+    /// 今日 progress 跟 todayEarned 同步,确保累计按秒增长。
     public static func monthEarned(settings: SalarySettings, now: Date) -> Double {
         let cal = ChineseWorkdayCalendar.calendar
         let y = cal.component(.year, from: now)
         let m = cal.component(.month, from: now)
-        guard let monthStart = cal.date(from: DateComponents(year: y, month: m, day: 1)),
-              let monthEnd = cal.date(byAdding: .month, value: 1, to: monthStart) else { return 0 }
+        guard let monthStart = cal.date(from: DateComponents(year: y, month: m, day: 1)) else { return 0 }
+        let todayStart = cal.startOfDay(for: now)
 
         let totalWorkdays = ChineseWorkdayCalendar.monthWorkdays(year: y, month: m)
         guard totalWorkdays > 0 else { return 0 }
 
-        let periodEnd = min(now, monthEnd)
-        let worked = ChineseWorkdayCalendar.workdaysBetween(from: monthStart, to: periodEnd)
-        return settings.monthlyNetSalary * Double(worked) / Double(totalWorkdays)
+        // 1) 完整过去日(月初到昨天,不含今天)
+        let completeDaysWorked = ChineseWorkdayCalendar.workdaysBetween(from: monthStart, to: todayStart)
+        let completeDaysEarn = settings.monthlyNetSalary * Double(completeDaysWorked) / Double(totalWorkdays)
+
+        // 2) 今日 progress(只在今天工作日时加,休息日不加)
+        let todayEarn: Double
+        if ChineseWorkdayCalendar.isWorkday(now) {
+            let todayDaily = dailySalary(settings: settings, now: now)
+            todayEarn = todayDaily * todayProgressFraction(settings: settings, now: now)
+        } else {
+            todayEarn = 0
+        }
+
+        return completeDaysEarn + todayEarn
     }
 
-    /// 在职累计:从 hireDate 起,按月分段,每段用当月 workdays 算。
-    /// hireDate 在月中:从 hireDate 起;完整过去月:整月;当前月:到 now。
+    /// 在职累计:hireDate 到当前月昨天(完整过去日) × 各月日薪 + 当前月今日 progress × 日薪。
+    /// hireDate 在月中:从 hireDate 起;完整过去月:整月;当前月:到 todayStart(完整过去日)。
     /// 表外年份的月份会回退到"周一~五"默认规则。
     public static func totalEarned(settings: SalarySettings, now: Date) -> Double {
         guard let hire = settings.hireDate, hire <= now else { return 0 }
@@ -241,6 +298,7 @@ public enum SalaryEngine {
         let nowYear = cal.component(.year, from: now)
         let nowMonth = cal.component(.month, from: now)
         guard let monthNow = cal.date(from: DateComponents(year: nowYear, month: nowMonth, day: 1)) else { return 0 }
+        let todayStart = cal.startOfDay(for: now)
 
         var total: Double = 0
         var cursor = firstDayOfMonth(hire, cal)
@@ -266,22 +324,30 @@ public enum SalaryEngine {
                 periodStart = monthStart
             }
 
-            // periodEnd:完整过去月取 monthEnd,当前月取 now
+            // periodEnd:完整过去月取 monthEnd,当前月取 todayStart(不含今天,只算完整过去日)
             let periodEnd: Date
             if monthEnd <= monthNow {
                 periodEnd = monthEnd
             } else if monthStart == monthNow {
-                periodEnd = now
+                periodEnd = todayStart
             } else {
                 // 未来月,理论上 while 条件已排除,但保险起见退出
                 break
             }
 
-            let worked = ChineseWorkdayCalendar.workdaysBetween(from: periodStart, to: periodEnd)
-            total += settings.monthlyNetSalary * Double(worked) / Double(totalWorkdays)
+            if periodStart < periodEnd {
+                let worked = ChineseWorkdayCalendar.workdaysBetween(from: periodStart, to: periodEnd)
+                total += settings.monthlyNetSalary * Double(worked) / Double(totalWorkdays)
+            }
 
             guard let next = cal.date(byAdding: .month, value: 1, to: cursor) else { break }
             cursor = next
+        }
+
+        // 当前月今日 progress(只在今天工作日时加,休息日不加)
+        if ChineseWorkdayCalendar.isWorkday(now) {
+            let todayDaily = dailySalary(settings: settings, now: now)
+            total += todayDaily * todayProgressFraction(settings: settings, now: now)
         }
 
         return total

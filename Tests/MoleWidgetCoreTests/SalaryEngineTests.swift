@@ -435,11 +435,12 @@ import Testing
 
     @Test func totalEarned_currentMonth_onlyUpToNow() {
         // hire = 2024-01-01,now = 2024-01-15 10:00 (Mon 上午 10 点)
-        // 1/1 元旦假,1/2-5 (4) + 1/8-12 (5) + 1/15 本身(早 10 点前计入) = 10
+        // 1/1 元旦假,1/2-5 (4) + 1/8-12 (5) = 9 个完整过去日;
+        // 1/15 10:00 → worked=1h, total=9h, progress=1/9,todayEarn=daily*1/9
         var s = Self.defaultSettings
         s.hireDate = Self.date(2024, 1, 1, 0, 0)
         let snap = SalaryEngine.compute(settings: s, now: Self.date(2024, 1, 15, 10, 0))
-        let expected = 21000.0 * 10.0 / 22.0
+        let expected = 21000.0 * (9.0 + 1.0 / 9.0) / 22.0
         #expect(abs(snap.totalEarned - expected) < 0.5)
     }
 
@@ -458,6 +459,72 @@ import Testing
         let mar = 21000.0 * 10.0 / 22.0
         let expected = dec + jan + feb + mar
         #expect(abs(snap.totalEarned - expected) < 1.0)
+    }
+
+    // MARK: - 累计:bug 修复 —— 跟 todayEarned 同步按秒增长
+
+    /// 修复前 bug:9/9 当天的 monthEarned 整天不变(整天被算作 1 个工作日)。
+    /// 修复后:9/9 18:00 应 > 9/9 10:00(今日 progress 从 1/9 涨到 8/9)。
+    @Test func monthEarned_growsWithTimeInSameDay() {
+        // 2024-09-09 = Mon,9 月有 21 个工作日,daily = 21000/21
+        let morning = SalaryEngine.compute(settings: Self.defaultSettings, now: Self.date(2024, 9, 9, 10, 0))
+        let evening = SalaryEngine.compute(settings: Self.defaultSettings, now: Self.date(2024, 9, 9, 18, 0))
+        #expect(evening.monthEarned > morning.monthEarned,
+                "monthEarned 应该在同一天内随时间增长,实际:morning=\(morning.monthEarned), evening=\(evening.monthEarned)")
+    }
+
+    /// 跨天切换:9/9 23:59(刚下班,今日 progress=1)≈ 9/10 09:30(新工作日,新 progress 小)
+    /// 总值连续不跳变,且新一天的值 >= 旧一天收尾(增长由新一天新增 + progress 共同决定)。
+    @Test func monthEarned_atDayBoundary_correctlyTransitions() {
+        let endOfDay = SalaryEngine.compute(settings: Self.defaultSettings, now: Self.date(2024, 9, 9, 23, 59))
+        let nextDayLater = SalaryEngine.compute(settings: Self.defaultSettings, now: Self.date(2024, 9, 10, 9, 30))
+        // 9/10 09:30 比 9/9 23:59 至少多 1 个完整工作日,差值 ≥ daily - progressToday
+        #expect(nextDayLater.monthEarned > endOfDay.monthEarned,
+                "9/10 09:30 应该 > 9/9 23:59,实际:end=\(endOfDay.monthEarned), next=\(nextDayLater.monthEarned)")
+        // 同时验证两个时刻对应的 monthEarned 都在合理量级(> 5 个完整工作日)
+        let daily = 21000.0 / 21.0
+        #expect(endOfDay.monthEarned > 5 * daily)
+    }
+
+    /// 修复前 bug:yearEarned 同样按整天算,导致"今日在变,本年不变"。
+    @Test func yearEarned_growsWithTimeInSameDay() {
+        let morning = SalaryEngine.compute(settings: Self.defaultSettings, now: Self.date(2024, 9, 9, 10, 0))
+        let evening = SalaryEngine.compute(settings: Self.defaultSettings, now: Self.date(2024, 9, 9, 18, 0))
+        #expect(evening.yearEarned > morning.yearEarned,
+                "yearEarned 应该在同一天内随时间增长")
+    }
+
+    /// 修复前 bug:totalEarned 同样按整天算。
+    @Test func totalEarned_growsWithTimeInSameDay() {
+        var s = Self.defaultSettings
+        s.hireDate = Self.date(2024, 1, 1, 0, 0)
+        let morning = SalaryEngine.compute(settings: s, now: Self.date(2024, 9, 9, 10, 0))
+        let evening = SalaryEngine.compute(settings: s, now: Self.date(2024, 9, 9, 18, 0))
+        #expect(evening.totalEarned > morning.totalEarned,
+                "totalEarned 应该在同一天内随时间增长")
+    }
+
+    /// 今天是休息日:monthEarned = 完整过去日部分(今日 progress = 0)
+    /// 2024-09-15 = Sun,属于中秋假期(9/15-17 全假)
+    @Test func monthEarned_isWorkdayFalse_returnsCompleteDaysOnly() {
+        let snap = SalaryEngine.compute(settings: Self.defaultSettings, now: Self.date(2024, 9, 15, 14, 0))
+        // 9/1-9/14 完整过去日工作日 = 9/2-6 (5) + 9/9-13 (5) + 9/14 (Sat 调休,1) = 11
+        // 9/15 是中秋假,isWorkday=false,todayEarn=0
+        let expected = 21000.0 * 11.0 / 21.0
+        #expect(abs(snap.monthEarned - expected) < 0.5,
+                "休息日 monthEarned 应等于完整过去日部分,实际:\(snap.monthEarned), 期望:\(expected)")
+    }
+
+    /// 连续性:9/9 23:59(今日 progress 高)≈ 9/10 00:01(新完整日,新 progress 低),总值不跳变
+    /// 修复前 bug:9/10 00:01 会比 9/9 23:59 多出"9/9 整天"但少"9/9 整天"也算当日,实际上同一天重算导致跳变。
+    /// 修复后:9/9 23:59 = 5 完整 + 1.0 今日 = 6;9/10 00:01 = 6 完整 + 0.0 今日 = 6(连续)
+    @Test func monthEarned_todayAndYesterday_continuous() {
+        let endOfDay = SalaryEngine.compute(settings: Self.defaultSettings, now: Self.date(2024, 9, 9, 23, 59))
+        let startOfNext = SalaryEngine.compute(settings: Self.defaultSettings, now: Self.date(2024, 9, 10, 0, 1))
+        let daily = 21000.0 / 21.0
+        // 跨天切换不应该跳变超过一天的日薪
+        #expect(abs(endOfDay.monthEarned - startOfNext.monthEarned) < daily,
+                "9/9 23:59 vs 9/10 00:01 不应跳变超过 1 天日薪,实际: end=\(endOfDay.monthEarned), start=\(startOfNext.monthEarned)")
     }
 
     // MARK: - 格式化
