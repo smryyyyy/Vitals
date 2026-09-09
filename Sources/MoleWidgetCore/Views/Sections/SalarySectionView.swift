@@ -71,10 +71,16 @@ public struct SalarySectionView: View, Equatable {
     @ViewBuilder
     private var activeBody: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(SalaryEngine.formatCNY(snapshot.todayEarned))
-                .font(.system(size: 22, weight: .semibold, design: .monospaced))
-                .foregroundStyle(Theme.accent)
-                .lineLimit(1)
+            HStack(alignment: .lastTextBaseline, spacing: 8) {
+                Text(SalaryEngine.formatCNY(snapshot.todayEarned))
+                    .font(.system(size: 22, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Theme.accent)
+                    .lineLimit(1)
+                Text("/ \(SalaryEngine.formatCNY(snapshot.todayDaily))")
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundStyle(Theme.dim)
+                    .lineLimit(1)
+            }
             BarView(fraction: snapshot.progress, color: Theme.accent).equatable()
             kpiColumns(
                 left: {
@@ -105,10 +111,16 @@ public struct SalarySectionView: View, Equatable {
     @ViewBuilder
     private var doneBody: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(SalaryEngine.formatCNY(snapshot.todayEarned))
-                .font(.system(size: 22, weight: .semibold, design: .monospaced))
-                .foregroundStyle(Theme.text)
-                .lineLimit(1)
+            HStack(alignment: .lastTextBaseline, spacing: 8) {
+                Text(SalaryEngine.formatCNY(snapshot.todayEarned))
+                    .font(.system(size: 22, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Theme.text)
+                    .lineLimit(1)
+                Text("/ \(SalaryEngine.formatCNY(snapshot.todayDaily))")
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundStyle(Theme.dim)
+                    .lineLimit(1)
+            }
             BarView(fraction: 1.0, color: Theme.accent).equatable()
             kpiColumns(
                 left: {
