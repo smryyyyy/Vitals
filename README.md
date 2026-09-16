@@ -304,16 +304,6 @@ MIT License
 
 本项目基于 [mole-widget](https://github.com/TadelUnso/mole-widget) 修改而来，感谢原作者的出色设计。
 
-主要改动：
-- 中文化（菜单 / 标签 / 帮助 / 单位）
-- 桌面浮窗标题栏去除（更简洁）
-- 删除 Ko-fi / GitHub 链接 / Sparkle 自动更新
-- 删除"用量历史"窗口
-- 集成 MiniMax 用量 API（5h + 周 + 倒计时）
-- macOS Keychain 存储凭据
-- 集成中国法定节假日表（2024-2026 国务院办公厅通知原文）
-- 集成"实时工资"模块（本地纯计算，1秒刷新）
-
 ---
 
 *本软件由 AI 辅助编写。*
