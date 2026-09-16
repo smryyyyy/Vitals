@@ -18,54 +18,63 @@
 
 ## 功能特点
 
-- **桌面浮窗**：always-on-top 浮窗，可拖拽 + 缩放，锁位置
-- **菜单栏常驻**：MenuBarExtra 实时显示 CPU/内存/网络/磁盘指标
-- **七大模块**（可独立开关）：
-  - **CPU**：总占用 + 温度 + Top 3 核心 + 负载 + 趋势 sparkline
-  - **内存**：已用/空闲/缓存/可用 + 分级配色
-  - **磁盘**：占用 + I/O 速度（IOKit IOBlockStorageDriver）
-  - **网络**：下载/上传速率 + 接口名 + IP
-  - **电源**：电量 + 健康度 + 充放电状态 + 电池温度
-  - **进程**：Top 3 进程按 CPU
-  - **工资**：实时显示今日已赚 / 本月累计 / 本年累计 / 在职累计，支持税后月薪、上下班时间、午休时段、工作模式设置，按中国法定节假日 + 调休自动算月工作日
-- **MiniMax 用量集成**：
-  - 5h 限额 + 周限额实时查询
-  - 自带"Xh Ym 后重置"倒计时
-  - macOS Keychain 安全存 cookie
-  - 1/5/15/30/60 分钟可配刷新频率
-  - **菜单栏指标**：可选 "5h" / "week" / "工资" 列显示（参照 CPU/MEM 模式）
-- **SMC CPU 温度**：Apple Silicon die 温度中位数（防单点传感器异常）
-- **极简 SwiftUI 主题**：Catppuccin 配色，3 档字体大小 + 系统/等宽 2 档字体
+### 系统监控
+
+- **桌面浮窗**:always-on-top 浮窗,可拖拽 + 缩放,锁位置
+- **菜单栏常驻**:MenuBarExtra 实时显示 CPU/内存/网络/磁盘指标
+- **七大模块**(可独立开关):
+  - **CPU**:总占用 + 温度 + Top 3 核心 + 负载 + 趋势 sparkline
+  - **内存**:已用/空闲/缓存/可用 + 分级配色
+  - **磁盘**:占用 + I/O 速度(IOKit IOBlockStorageDriver)
+  - **网络**:下载/上传速率 + 接口名 + IP
+  - **电源**:电量 + 健康度 + 充放电状态 + 电池温度
+  - **进程**:Top 3 进程按 CPU
+  - **工资**:实时显示今日已赚 / 本月累计 / 本年累计 / 在职累计,支持税后月薪、上下班时间、午休时段、工作模式设置,按中国法定节假日 + 调休自动算月工作日
+- **SMC CPU 温度**:Apple Silicon die 温度中位数(防单点传感器异常)
 - **后台采样能耗优化**:Timer tolerance 让 macOS 合并唤醒
 - **启动时间锁保护**:killStaleWidgetProcess 启动时清旧进程
 
-### 截图模块(本轮新增)
+### MiniMax 用量集成
 
-- **快速截图 / 高级窗口截图**:Carbon 全局快捷键触发(默认 ⇧⌘2 / ⇧⌃⌥A),不存文件、不存历史
-- **编辑器**:箭头 / 矩形 / 文字 / 马赛克 8 个标注工具,马赛克生成在 GPU 上
-- **OCR**:macOS Vision 框架本地识别(免费 + 带 bounding box),Vision 2s 超时
-- **翻译**:MiniMax API(用户自配 Key,存 macOS Keychain),逐行翻译不合并
-- **设置窗口**:快捷键录制 + 权限状态检查(屏幕录制 + 辅助功能)+ 跳转系统设置
+- 5h 限额 + 周限额实时查询
+- 自带"Xh Ym 后重置"倒计时
+- macOS Keychain 安全存 cookie(3 个:\_token / HERTZ-SESSION / minimax\_group\_id\_v2)
+- 1/5/15/30/60 分钟可配刷新频率
+- **菜单栏指标**:可选 "5h" / "week" / "工资" 列显示(参照 CPU/MEM 模式)
 
-### 本分支新增
+### 截图模块
 
-- 集成 **MiniMax 用量模块**：5h 限额 + 周限额 + 倒计时
-- 菜单栏指标新增 **MiniMax 5h** + **MiniMax 周** 选项（默认关闭，可独立勾选）
-- 集成 **macOS Keychain** 存储 MiniMax 认证（3 个 cookie）
-- **设置面板**支持自定义 MiniMax 刷新间隔（1/5/15/30/60 分钟）
-- **删除 Ko-fi 支持按钮** + **删除 GitHub 链接 / 反馈问题 / 自动检查更新**
-- **删除"用量历史…"窗口**（24h 历史采样功能）
-- **删 Swift Sparkle 依赖**（精简包体 81%）
-- **桌面浮窗标题栏删除**（Vitals 名 + S/M/L 按钮 + 锁定 + 隐藏）
-- **所有用户可见英文 → 中文硬编码翻译**（菜单/标签/帮助/单位）
-- **电源状态修复**：用 AppleSmartBattery 注册表替换 IOKit IOPS API（解决 macOS 26 缓存不一致问题）
-- **App Group ID 简化**：使用 hardcoded 容器路径替代 App Groups（更简单的安装流程）
-- 集成 **实时工资模块**：今日已赚 / 本月累计 / 本年累计 / 在职累计，1 秒刷新
-- 集成 **中国法定节假日 + 调休表**：2024-2026 内嵌，2027+ 兜底 + UI 警告
-- 桌面浮窗 **工资 section 固定第一列**，占整列（其它模块双列）
-- 菜单栏指标新增 **工资** 选项（默认关闭，可独立勾选）
-- **税后月薪** 输入 + **午休是否计入** 开关 + **入职日期** 自动算在职累计
-- 53 个 SalaryEngineTests 单元测试
+- **快速截图 / 高级窗口截图**:Carbon 全局快捷键(默认 ⇧⌘2 / ⇧⌃⌥A)
+  - 框选区域 → 复制到 NSPasteboard(不存文件、不存历史)
+  - 在 MiniMax 设置 → 截图设置 可改键
+  - Carbon 签名 "Vtls"(与 Mio "Mio1" 区分)
+  - 权限检查:Screen Recording + Accessibility,授权后 Carbon hotkey 自动重注册
+- **编辑器**(8 个标注工具 + 颜色选择器 + 撤销/重做)
+  - 箭头 / 矩形 / 圆 / 线条 / 文字 / 马赛克 / 自由笔
+  - 马赛克在 Apple Silicon GPU 上生成(IOBlockStorageDriver 实时编码)
+  - 编辑完成点"完成"→ 复制 + 关编辑器 + Dynamic Island 反馈
+- **OCR 识别**(macOS Vision 本地 + 免费 + 离线)
+  - VNRecognizeTextRequest 带 bounding box,2 秒超时 + ResumeOnce
+  - 跨实例画布 SHA256 hash 缓存(5 分钟 TTL,同画布不重跑 Vision)
+  - 失败可点"重试"按钮(invalidate cache 后重跑)
+- **AI 翻译**(MiniMax chatcompletion\_v2 + 段落覆盖兜底)
+  - 用户自配 MiniMax API Key,存 macOS Keychain(服务 ID `com.skyline.vitals.ocr.aikey`)
+  - 6 状态机:idle / ocrLoading / completed / translating / translated / failed
+  - 4 路径响应解析(JSON 匹配 / JSON 不匹配 / 非 JSON split 匹配 / 非 JSON split 不匹配)
+  - 段落覆盖兜底:模型合并多行时整段覆盖在 firstOriginalLine,放弃逐行对应
+  - 翻译后画布缓存(`translatedCanvasData`),让用户点"提取文字"按译文图重新 OCR
+- **截图设置窗口**(权限 + API Key + 目标语言)
+  - 快捷键录制(顶部"录制"按钮 + Backspace 清除,X/重置按钮已删)
+  - 权限状态(Screen Recording + Accessibility)+ 跳转系统设置
+  - API Key 输入(SecureField + 250ms debounce 写 Keychain,避免频繁 securityd IPC)
+  - 目标语言输入框(默认"简体中文",250ms debounce 写 UserDefaults)
+  - 关编辑器时同步 flush pending 写盘,避免最后一次语言设置丢失
+
+### 主题与体验
+
+- **极简 SwiftUI 主题**:Catppuccin 配色,3 档字体大小 + 系统/等宽 2 档字体
+- **跨语言**:所有用户可见英文 → 中文硬编码翻译(菜单/标签/帮助/单位)
+- **可定制**:7 大模块独立开关,菜单栏指标可选列,快捷键自定义
 
 ---
 
