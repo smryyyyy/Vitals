@@ -73,6 +73,9 @@ struct MoleWidgetApp: App {
     var body: some Scene {
         MenuBarExtra {
             Divider()
+            Button("截图设置…") {
+                appDelegate.openScreenshotSettings()
+            }
             Button("MiniMax 设置…") {
                 appDelegate.openMinimaxSettings()
             }
@@ -319,10 +322,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let store = MetricsStore()
     let minimaxManager = MinimaxManager()
     let salaryManager = SalaryManager()
+    let screenshotServices = ScreenshotServices(defaults: UserDefaults.standard)
     private var minimaxWindow: NSWindow?
     private var minimaxSettingsHost: NSHostingController<MinimaxSettingsView>?
     private var salaryWindow: NSWindow?
     private var salarySettingsHost: NSHostingController<SalarySettingsView>?
+    private var screenshotWindow: NSWindow?
+    private var screenshotSettingsHost: NSHostingController<ScreenshotSettingsView>?
 
 
     /// Tracks the last refresh interval seen in UserDefaults so we can detect changes.
@@ -343,6 +349,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store.start()
         minimaxManager.start()
         salaryManager.start()
+        screenshotServices.start()
+
+        // 监听截图设置请求(从编辑器 AI 面板的"前往设置"按钮触发)
+        NotificationCenter.default.addObserver(
+            forName: .openScreenshotSettings,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.openScreenshotSettings()
+            }
+        }
 
         let window = DesktopWindow(
             contentRect: NSRect(x: 0, y: 0, width: 520, height: 300),
@@ -515,9 +533,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.salaryWindow = window
     }
 
+    /// Opens (or reuses) a single non-activating settings window for the
+    /// screenshot module. Hosts ScreenshotSettingsView with shortcut recording
+    /// and AI translation API key management.
+    func openScreenshotSettings() {
+        if let window = screenshotWindow {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        let settingsManager = ScreenshotSettingsManager(
+            settings: screenshotServices.screenshotShortcutStore,
+            captureSettings: screenshotServices.captureSettings,
+            credential: screenshotServices.aiCredential,
+            permissionManager: screenshotServices.permissionManager,
+            globalShortcutService: screenshotServices.globalShortcutService,
+            systemSettingsOpener: screenshotServices.systemSettingsOpener,
+            onTestConnection: { [weak self] in
+                guard let self else { return false }
+                return await self.screenshotServices.testAPIConnection()
+            }
+        )
+        let host = NSHostingController(rootView: ScreenshotSettingsView(
+            manager: settingsManager,
+            onClose: { [weak self] in
+                self?.screenshotWindow?.close()
+            }
+        ))
+        self.screenshotSettingsHost = host
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 500, height: 640),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentViewController = host
+        window.title = "截图设置"
+        window.isReleasedWhenClosed = false
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        self.screenshotWindow = window
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         store.stop()
         minimaxManager.stop()
         salaryManager.stop()
+        screenshotServices.stop()
     }
 }

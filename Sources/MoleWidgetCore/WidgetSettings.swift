@@ -128,3 +128,21 @@ public enum WidgetSettings {
             : defaults.bool(forKey: widgetVisibleKey)
     }
 }
+
+// MARK: - 截图模块偏好 key
+
+public extension WidgetSettings {
+    /// 快速截图快捷键的 JSON 编码(ShortcutAssignment)
+    static let screenshotShortcutAreaKey = "screenshotShortcutArea"
+    /// 高级窗口截图快捷键的 JSON 编码
+    static let screenshotShortcutAdvancedKey = "screenshotShortcutAdvanced"
+    /// OCR 翻译目标语言,默认"简体中文"
+    static let ocrTargetLanguageKey = "ocrTargetLanguage"
+    /// OCR 翻译目标语言默认值
+    static let defaultOCRTargetLanguage = "简体中文"
+
+    /// 读取 OCR 翻译目标语言。
+    static func ocrTargetLanguage(in defaults: UserDefaults) -> String {
+        defaults.string(forKey: ocrTargetLanguageKey) ?? defaultOCRTargetLanguage
+    }
+}

@@ -69,6 +69,12 @@ DerivedData/
 *~
 .DS_Store?
 
+# Backup / scratch
+*.bak
+*.tmp
+*.orig
+*.rej
+
 # Build logs
 *.log
 

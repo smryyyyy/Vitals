@@ -36,8 +36,16 @@
   - **菜单栏指标**：可选 "5h" / "week" / "工资" 列显示（参照 CPU/MEM 模式）
 - **SMC CPU 温度**：Apple Silicon die 温度中位数（防单点传感器异常）
 - **极简 SwiftUI 主题**：Catppuccin 配色，3 档字体大小 + 系统/等宽 2 档字体
-- **后台采样能耗优化**：Timer tolerance 让 macOS 合并唤醒
-- **启动时间锁保护**：killStaleWidgetProcess 启动时清旧进程
+- **后台采样能耗优化**:Timer tolerance 让 macOS 合并唤醒
+- **启动时间锁保护**:killStaleWidgetProcess 启动时清旧进程
+
+### 截图模块(本轮新增)
+
+- **快速截图 / 高级窗口截图**:Carbon 全局快捷键触发(默认 ⇧⌘2 / ⇧⌃⌥A),不存文件、不存历史
+- **编辑器**:箭头 / 矩形 / 文字 / 马赛克 8 个标注工具,马赛克生成在 GPU 上
+- **OCR**:macOS Vision 框架本地识别(免费 + 带 bounding box),Vision 2s 超时
+- **翻译**:MiniMax API(用户自配 Key,存 macOS Keychain),逐行翻译不合并
+- **设置窗口**:快捷键录制 + 权限状态检查(屏幕录制 + 辅助功能)+ 跳转系统设置
 
 ### 本分支新增
 
@@ -118,6 +126,16 @@ hdiutil create -srcfolder /tmp/vitals_dmg -volname Vitals -o ~/Desktop/Vitals.dm
 | 显示/隐藏 | 菜单 → 显示在桌面（关闭后只显示菜单栏） |
 | 模块开关 | 菜单 → 模块 → 勾选要显示的 section |
 
+### 截图操作
+
+| 操作 | 触发 | 说明 |
+|------|------|------|
+| 触发截图 | ⇧⌘2 / ⇧⌃⌥A | 全局快捷键,可在截图设置窗口改键 |
+| 编辑标注 | 编辑器打开后 | 8 个工具按钮 + 颜色选择器 |
+| OCR 识别 | 编辑器 → 识别 | macOS Vision 本地识别,1-3 秒 |
+| 翻译 | 编辑器 → 翻译 | MiniMax API 翻译,3-5 秒 |
+| 一键复制 | 翻译完成后 | 复制译文到剪贴板 |
+
 ### 菜单栏 MiniMax 指标
 
 - 菜单 → 设置 → 菜单栏指标 → 勾选 **MiniMax 5h** / **MiniMax 周**
@@ -175,6 +193,18 @@ Vitals/
 │           ├── SalaryEngine.swift     # 纯计算引擎
 │           ├── SalaryManager.swift    # @MainActor @Observable 1秒定时器
 │           └── ChineseWorkdayCalendar.swift  # 国务院 2024-2026 放假调休表
+│       └── Screenshot/                # 截图模块 (本轮新增,46 个文件)
+│           ├── ScreenshotServices.swift       # 顶层协调
+│           ├── ScreenshotTypes.swift
+│           ├── Permission/ (PermissionManager + SystemSettings)
+│           ├── Hotkey/ (GlobalShortcutService "Vtls" 签名 + ShortcutRecorderControl 等 6 文件)
+│           ├── OutputDelivery/ (ClipboardOutputService 等 2 文件)
+│           ├── Capture/ (CapturePipeline + CaptureSession + 等 6 文件)
+│           ├── Selection/ (WindowHitTester + SelectionPresenter 等 5 文件)
+│           ├── Editor/ (12 文件,含 AIPanel + 8 工具工具栏)
+│           ├── OCR/ (VisionOCRClient + MiniMaxTranslationClient + OCRService 等 6 文件)
+│           ├── ImageProcessing/ (3 文件)
+│           └── Settings/ (CaptureSettings + ScreenshotSettingsView)
 ├── Resources/
 │   ├── AppIcon.icns
 │   └── Info.plist
@@ -202,6 +232,9 @@ Vitals/
 | @Observable (Swift 5.9+) | 响应式数据流 |
 | URLSession async/await | MiniMax API |
 | Security framework (SecItem) | Keychain |
+| Carbon (RegisterEventHotKey) | 全局快捷键,签名 "Vtls" |
+| Vision (VNRecognizeTextRequest) | 本地 OCR 识别 |
+| CryptoKit | OCR 画布 hash 缓存(SHA256) |
 | Sparkle (已移除) | (历史) 自更新 |
 
 ---
@@ -236,6 +269,19 @@ Apple Silicon 才有 SMC 温度传感器。Intel Mac / 沙盒化进程拿不到�
 ### 工资 section 显示"节假日表已过期"
 
 内嵌的中国法定节假日表覆盖 2024-2026 三年（来自国务院办公厅通知原文）。2027 年起系统会走默认"周一~五"规则，并在浮窗顶部 + 设置页加红字提示。**手动更新**：每年 12 月等国务院发新通知后，把数据追加到 `Sources/MoleWidgetCore/Salary/ChineseWorkdayCalendar.swift` 的 table 字典，然后 `make build` 重新打包。
+
+### 截图快捷键不生效
+
+检查截图设置窗口的"权限"section:屏幕录制 + 辅助功能都必须授权。
+
+- macOS 14+:辅助功能授权后 Vitals 自动重新注册 hotkey,无需重启
+- 不需要重启,授权后 1 秒内自动生效
+
+### OCR 翻译失败
+
+- 检查截图设置窗口的 MiniMax API Key 是否填写
+- 网络问题看 OCRService 错误提示
+- MiniMax 模型偶发合并多行,系统自动降级到"段落覆盖"模式(整段译文覆盖在第一行)
 
 ---
 
