@@ -1,4 +1,4 @@
-<h1 align="center">Vitals v1.1.0</h1>
+<h1 align="center">Vitals v1.2.0</h1>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Swift-6.0+-F05138?style=flat-square&logo=swift&logoColor=white" alt="Swift">
