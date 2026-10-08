@@ -74,6 +74,7 @@ public enum WidgetSettings {
     public static let menuBarShowNetworkKey = "menuBarShowNetwork"
     public static let menuBarShowDiskKey    = "menuBarShowDisk"
     public static let menuBarShowMinimax5hKey = "menuBarShowMinimax5h"
+    public static let menuBarShowMinimaxResetKey = "menuBarShowMinimaxReset"
     public static let menuBarShowMinimaxWeeklyKey = "menuBarShowMinimaxWeekly"
     public static let menuBarShowSalaryKey = "menuBarShowSalary"
 
@@ -126,6 +127,25 @@ public enum WidgetSettings {
         defaults.object(forKey: widgetVisibleKey) == nil
             ? defaultVisible
             : defaults.bool(forKey: widgetVisibleKey)
+    }
+
+    // MARK: - Cursor theme
+
+    /// Applies the bundled CatOmen Raiden cursor theme while the app runs.
+    /// Cursors live in this process's memory, so quitting Vitals restores the
+    /// system defaults regardless of this flag.
+    ///
+    /// Defaults to **off**: enabling this writes global window-server cursor
+    /// state, so it must be an explicit opt-in rather than something a fresh
+    /// install turns on by itself.
+    public static let cursorThemeEnabledKey = "cursorThemeEnabled"
+    public static let defaultCursorThemeEnabled: Bool = false
+
+    /// Reads the flag with absent-key fallback, same reasoning as `isVisible(in:)`.
+    public static func isCursorThemeEnabled(in defaults: UserDefaults) -> Bool {
+        defaults.object(forKey: cursorThemeEnabledKey) == nil
+            ? defaultCursorThemeEnabled
+            : defaults.bool(forKey: cursorThemeEnabledKey)
     }
 }
 

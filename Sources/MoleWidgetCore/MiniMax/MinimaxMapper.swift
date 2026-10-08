@@ -41,14 +41,44 @@ public enum MinimaxMapper {
     /// - < 24 h         → "Xh Ym 后重置"
     /// - ≥ 24 h         → "Xd Yh 后重置"
     public static func countdown(for limit: MinimaxLimit?, now: Date = Date()) -> String? {
-        guard let limit, let remains = limit.remainsTime else { return nil }
-        let total = max(0, Int(remains))
-        if total < 60 { return "即将重置" }
+        guard let limit, let remains = limit.remainsTime,
+              let parts = split(remains) else { return nil }
+        return parts.sentence
+    }
+
+    /// The same countdown without the "后重置" suffix, for the menu bar where
+    /// the column is too narrow for it. Shares `split` with `countdown` so the
+    /// two can never drift apart.
+    /// - < 1 min → "--"
+    /// - < 1 h   → "12m"
+    /// - < 24 h  → "3h05"
+    /// - ≥ 24 h  → "2d04"
+    public static func compactCountdown(seconds: TimeInterval) -> String? {
+        guard let parts = split(seconds) else { return nil }
+        return parts.compact
+    }
+
+    /// Splits a remaining-seconds value into its display parts.
+    /// `remainsTime` is **seconds**, not milliseconds.
+    private static func split(_ seconds: TimeInterval) -> (sentence: String, compact: String)? {
+        guard seconds.isFinite, seconds > 0 else { return nil }
+        let total = Int(seconds)
+        if total < 60 { return ("即将重置", "--") }
         let m = (total % 3600) / 60
         let h = (total % 86400) / 3600
         let d = total / 86400
-        if d > 0 { return "\(d)d \(h)h 后重置" }
-        if h > 0 { return "\(h)h \(m)m 后重置" }
-        return "\(m)m 后重置"
+        if d > 0 {
+            return ("\(d)d \(h)h 后重置", "\(d)d\(padded(h))")
+        }
+        if h > 0 {
+            return ("\(h)h \(m)m 后重置", "\(h)h\(padded(m))")
+        }
+        return ("\(m)m 后重置", "\(m)m")
+    }
+
+    /// Keeps the compact form's width stable so the menu bar does not resize
+    /// once a minute.
+    private static func padded(_ value: Int) -> String {
+        value < 10 ? "0\(value)" : "\(value)"
     }
 }

@@ -21,7 +21,7 @@ public struct MenuBarMetric: Equatable {
 /// A metric that can be shown in the menu bar, in canonical display order.
 /// `network` and `disk` each pair two directions in one stacked column.
 public enum MenuBarMetricKind: String, CaseIterable {
-    case cpu, memory, temp, network, disk, minimax5h, minimaxWeekly, salary
+    case cpu, memory, temp, network, disk, minimax5h, minimaxReset, minimaxWeekly, salary
 }
 
 /// The live values a menu bar metric may draw from. Each is optional and its
@@ -36,6 +36,9 @@ public struct MenuBarValues {
     public var diskWriteBytesPerSec: Double? // MetricsStore.diskIO?.write
     public var minimax5hPercent: Int?        // MinimaxSnapshot.fiveHour?.usedPercent 0...100
     public var minimaxWeeklyPercent: Int?    // MinimaxSnapshot.weekly?.usedPercent 0...100
+    public var minimax5hResetSeconds: TimeInterval?  // MinimaxSnapshot.fiveHour.remainsTime(秒)
+                                              // 传原始秒数而非预格式化字符串:MiniMax 默认 5 分钟才刷新
+                                              // 一次,预格式化会让倒计时停在旧值上,渲染时再算。
     public var salaryToday: Double?          // SalaryManager.snapshot.todayEarned (元); nil = 未配置
 
     public init(
@@ -48,6 +51,7 @@ public struct MenuBarValues {
         diskWriteBytesPerSec: Double? = nil,
         minimax5hPercent: Int? = nil,
         minimaxWeeklyPercent: Int? = nil,
+        minimax5hResetSeconds: TimeInterval? = nil,
         salaryToday: Double? = nil
     ) {
         self.cpuFraction = cpuFraction
@@ -59,6 +63,7 @@ public struct MenuBarValues {
         self.diskWriteBytesPerSec = diskWriteBytesPerSec
         self.minimax5hPercent = minimax5hPercent
         self.minimaxWeeklyPercent = minimaxWeeklyPercent
+        self.minimax5hResetSeconds = minimax5hResetSeconds
         self.salaryToday = salaryToday
     }
 }
@@ -99,6 +104,10 @@ public enum MenuBarText {
                                  value: "写 \(Fmt.rateCompact(write))", stacked: true)
         case .minimax5h:
             return v.minimax5hPercent.map { MenuBarMetric(label: "5h", value: "\($0)%") }
+        case .minimaxReset:
+            return v.minimax5hResetSeconds
+                .flatMap { MinimaxMapper.compactCountdown(seconds: $0) }
+                .map { MenuBarMetric(label: "重置", value: $0) }
         case .minimaxWeekly:
             return v.minimaxWeeklyPercent.map { MenuBarMetric(label: "week", value: "\($0)%") }
         case .salary:
@@ -113,4 +122,5 @@ public enum MenuBarText {
     private static func degrees(_ celsius: Double) -> String {
         "\(Int(celsius.rounded()))°"
     }
+
 }

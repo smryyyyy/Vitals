@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  macOS 桌面浮窗系统监控 + MiniMax 用量面板 + 实时工资看板 — CPU / 内存 / 磁盘 / 网络 / 电源 / 进程 / 工资 七大模块实时数据。<br>
+  macOS 桌面浮窗系统监控 + MiniMax 用量面板 + 实时工资看板 + 自定义光标主题 — CPU / 内存 / 磁盘 / 网络 / 电源 / 进程 / 工资 七大模块实时数据。<br>
   <b>支持拖拽、缩放、锁位置、模块开关，菜单栏常驻。</b>
 </p>
 
@@ -76,6 +76,14 @@
 - **跨语言**:所有用户可见英文 → 中文硬编码翻译(菜单/标签/帮助/单位)
 - **可定制**:7 大模块独立开关,菜单栏指标可选列,快捷键自定义
 
+### 自定义光标
+
+- **CatOmen Raiden 动画光标**:内置 16 组 `.ani` 光标,菜单栏勾选「自定义光标」即生效
+- **系统级替换**:箭头 / 文本 / 链接 / 忙 / 缩放 / 禁止 等全部状态,不是只改大小和颜色
+- **私有 CGS API**:注册图案到 WindowServer,睡眠唤醒自动重应用
+- **失败自动回滚**:任何一个光标都没注册上就立刻还原系统光标,不留空窗
+- **实现细节与限制**:见 [CURSOR.md](CURSOR.md)
+
 ---
 
 ## 快速开始
@@ -108,6 +116,15 @@ hdiutil create -srcfolder /tmp/vitals_dmg -volname Vitals -o ~/Desktop/Vitals.dm
 
 > **注意**：本项目用 `Swift Package Manager` 而非 Xcode 工程。`Package.swift` 是入口，`make app` 把二进制 + Info.plist + AppIcon.icns 拼成 .app bundle。
 
+直接装进 `/Applications`：
+
+```bash
+make install
+# 打包 + 安装 + 把光标主题文件复制到 Application Support
+```
+
+> **关于光标主题文件**：动画光标（`.ani`）从网上下载后带 macOS 的下载来源标记，该标记无法删除，且**含此标记的文件无法放进已签名的 .app**。所以 `make app` 会把主题装到 `~/Library/Application Support/Vitals/Cursors/`，而不是打进 bundle。这是刻意的设计，详见 [CURSOR.md](CURSOR.md)。
+
 ### 3、MiniMax 用量配置
 
 1. 启动 Vitals 后，菜单栏图标 → **MiniMax 设置…**
@@ -134,6 +151,7 @@ hdiutil create -srcfolder /tmp/vitals_dmg -volname Vitals -o ~/Desktop/Vitals.dm
 | 锁定位置 | 菜单 → 锁定位置（关闭拖拽） |
 | 显示/隐藏 | 菜单 → 显示在桌面（关闭后只显示菜单栏） |
 | 模块开关 | 菜单 → 模块 → 勾选要显示的 section |
+| 自定义光标 | 菜单 → 勾选「自定义光标」（关闭即恢复系统光标） |
 
 ### 截图操作
 
@@ -158,6 +176,15 @@ hdiutil create -srcfolder /tmp/vitals_dmg -volname Vitals -o ~/Desktop/Vitals.dm
 - 可在设置面板改成 1/5/15/30/60 分钟
 - 1 分钟风险高（可能被后端风控），建议 5+
 - Cookie 存 **macOS Keychain**（系统级加密，App 卸载也不丢——除非手动 `security delete-generic-password`）
+
+### 自定义光标
+
+- 菜单 → 勾选 **自定义光标**，16 组 CatOmen Raiden 动画光标立即生效
+- 光标随 Vitals 进程存活；**退出 Vitals 即恢复系统光标**（这是设计行为，不是 bug）
+- 睡眠 / 唤醒后自动重新应用，无需手动操作
+- 勾掉开关同样会立刻还原系统光标
+- 依赖 macOS 私有 CGS API，macOS 大版本升级后可能失效；日志会记录注册结果
+- 已知：终端（Terminal / iTerm2）的文字光标暂不生效，普通文本框正常
 
 ### 性能开销
 
@@ -202,6 +229,10 @@ Vitals/
 │           ├── SalaryEngine.swift     # 纯计算引擎
 │           ├── SalaryManager.swift    # @MainActor @Observable 1秒定时器
 │           └── ChineseWorkdayCalendar.swift  # 国务院 2024-2026 放假调休表
+│       └── Cursor/                    # 系统光标主题模块 (3 个文件) → 见 CURSOR.md
+│           ├── CGSCursorBridge.swift   # CGS 私有 API 封装 (dlsym + 缩放扰动刷新)
+│           ├── ANIThemeLoader.swift    # Windows .ani 动画光标解析
+│           └── CursorThemeService.swift# 注册/回滚 + 睡眠唤醒重应用
 │       └── Screenshot/                # 截图模块 (本轮新增,46 个文件)
 │           ├── ScreenshotServices.swift       # 顶层协调
 │           ├── ScreenshotTypes.swift
@@ -216,13 +247,15 @@ Vitals/
 │           └── Settings/ (CaptureSettings + ScreenshotSettingsView)
 ├── Resources/
 │   ├── AppIcon.icns
-│   └── Info.plist
+│   ├── Info.plist
+│   └── Cursors/                  # 16 个 .ani 光标主题 (make cursors 装到 Application Support)
 ├── Scripts/
 │   └── make-icon.swift                # 图标生成
 ├── Tests/
-│   └── MoleWidgetCoreTests/ (17 文件)
+│   └── MoleWidgetCoreTests/ (20 文件)
 ├── Package.swift                       # SwiftPM 入口
 ├── Makefile                            # 打包 .app
+├── CURSOR.md                           # 自定义光标模块文档
 └── README.md
 ```
 
@@ -244,6 +277,7 @@ Vitals/
 | Carbon (RegisterEventHotKey) | 全局快捷键,签名 "Vtls" |
 | Vision (VNRecognizeTextRequest) | 本地 OCR 识别 |
 | CryptoKit | OCR 画布 hash 缓存(SHA256) |
+| CoreGraphics (私有 CGS) | 系统光标主题注册(CGSCursorBridge) |
 | Sparkle (已移除) | (历史) 自更新 |
 
 ---
@@ -292,6 +326,26 @@ Apple Silicon 才有 SMC 温度传感器。Intel Mac / 沙盒化进程拿不到�
 - 网络问题看 OCRService 错误提示
 - MiniMax 模型偶发合并多行,系统自动降级到"段落覆盖"模式(整段译文覆盖在第一行)
 
+### 自定义光标不生效 / 鼠标看不见
+
+这个功能依赖 macOS 私有 API,**故障模式是鼠标消失**,此时无法用鼠标点任何按钮自救。按 `Cmd+Q` 退出 Vitals 即可恢复(退出时会自动还原系统光标)。
+
+如果退出后仍未恢复:
+
+```bash
+killall -HUP Dock
+# 仍不行(会注销登录,未保存内容会丢):
+sudo killall -HUP WindowServer
+```
+
+查日志:
+
+```bash
+log show --last 3m --info --predicate 'process == "MoleWidget"' | grep "Cursor\."
+```
+
+其他已知情况:终端(Terminal / iTerm2)的文字光标目前不会被替换,只有普通文本框会。原因和排查见 [CURSOR.md](CURSOR.md)。
+
 ---
 
 ## 许可证
@@ -303,6 +357,10 @@ MIT License
 ## 致谢
 
 本项目基于 [mole-widget](https://github.com/TadelUnso/mole-widget) 修改而来，感谢原作者的出色设计。
+
+自定义光标模块参考了 [MaCursor](https://github.com/writronic/MaCursor) 的 CGS 私有 API 实现思路（该项目的 Mousecape 上游是 [alexzielenski/Mousecape](https://github.com/alexzielenski/Mousecape)）。
+
+光标主题 **CatOmen Raiden** 作者 Katana 逸邪（猫饭社区），包内附有作者原始说明与效果图。
 
 ---
 

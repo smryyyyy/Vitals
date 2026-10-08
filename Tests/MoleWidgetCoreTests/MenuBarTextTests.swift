@@ -139,4 +139,49 @@ import Testing
         #expect(metrics[7].label == "工资")
         #expect(metrics[7].value == "1.2k")
     }
+
+    // MARK: - 5h 重置倒计时
+
+    @Test func minimaxReset_usesSameSecondsAsPanel() {
+        // `remainsTime` 是秒不是毫秒 —— 之前按毫秒除以 1000,菜单栏一直显示 "--"。
+        #expect(MinimaxMapper.compactCountdown(seconds: 30) == "--")
+        #expect(MinimaxMapper.compactCountdown(seconds: 12 * 60) == "12m")
+        #expect(MinimaxMapper.compactCountdown(seconds: 3 * 3600 + 5 * 60) == "3h05")
+        #expect(MinimaxMapper.compactCountdown(seconds: 2 * 86400 + 4 * 3600) == "2d04")
+    }
+
+    @Test func minimaxReset_padsToFixedWidth() {
+        #expect(MinimaxMapper.compactCountdown(seconds: 3600) == "1h00")
+        #expect(MinimaxMapper.compactCountdown(seconds: 86400) == "1d00")
+    }
+
+    @Test func minimaxReset_invalidInput_returnsNil() {
+        #expect(MinimaxMapper.compactCountdown(seconds: -1) == nil)
+        #expect(MinimaxMapper.compactCountdown(seconds: 0) == nil)
+        #expect(MinimaxMapper.compactCountdown(seconds: .nan) == nil)
+    }
+
+    /// 面板用长格式、菜单栏用紧凑格式,但必须来自同一份拆分逻辑。
+    @Test func minimaxReset_panelAndMenuBarAgreeOnValue() {
+        let seconds: TimeInterval = 11 * 60          // 面板显示 "11m 后重置"
+        let limit = MinimaxLimit(usedPercent: 81, remainsTime: seconds)
+        #expect(MinimaxMapper.countdown(for: limit) == "11m 后重置")
+        #expect(MinimaxMapper.compactCountdown(seconds: limit.remainsTime ?? 0) == "11m")
+    }
+
+    @Test func minimaxReset_omittedWhenNoData() {
+        let values = MenuBarValues(cpuFraction: 0.5)
+        #expect(MenuBarText.metrics(values) { $0 == .minimaxReset }.isEmpty)
+    }
+
+    @Test func minimaxReset_rendersNextToUsage() {
+        let values = MenuBarValues(
+            minimax5hPercent: 81,
+            minimax5hResetSeconds: 11 * 60
+        )
+        let metrics = MenuBarText.metrics(values) { _ in true }
+        #expect(metrics.map(\.label) == ["5h", "重置"])
+        #expect(metrics[0].value == "81%")
+        #expect(metrics[1].value == "11m")
+    }
 }

@@ -34,6 +34,7 @@ struct MoleWidgetApp: App {
     @AppStorage(WidgetSettings.menuBarShowNetworkKey) private var menuBarShowNetwork = WidgetSettings.defaultMenuBarShowNetwork
     @AppStorage(WidgetSettings.menuBarShowDiskKey)    private var menuBarShowDisk    = WidgetSettings.defaultMenuBarShowDisk
     @AppStorage(WidgetSettings.menuBarShowMinimax5hKey) private var menuBarShowMinimax5h = false
+    @AppStorage(WidgetSettings.menuBarShowMinimaxResetKey) private var menuBarShowMinimaxReset = false
     @AppStorage(WidgetSettings.menuBarShowMinimaxWeeklyKey) private var menuBarShowMinimaxWeekly = false
     @AppStorage(WidgetSettings.menuBarShowSalaryKey) private var menuBarShowSalary = WidgetSettings.defaultMenuBarShowSalary
 
@@ -47,6 +48,7 @@ struct MoleWidgetApp: App {
     @AppStorage(WidgetSettings.showProcessesKey) private var showProcesses = true
     @AppStorage(WidgetSettings.showMinimaxKey)   private var showMinimax   = true
     @AppStorage(WidgetSettings.showSalaryKey)    private var showSalary    = WidgetSettings.defaultShowSalary
+    @AppStorage(WidgetSettings.cursorThemeEnabledKey) private var cursorThemeEnabled = WidgetSettings.defaultCursorThemeEnabled
 
     /// Monochrome template glyph echoing the app icon: four bars of varying
     /// length. Template images get tinted by macOS for light/dark menu bars.
@@ -84,6 +86,7 @@ struct MoleWidgetApp: App {
             }
             Toggle("锁定位置", isOn: $positionLocked)
             Toggle("显示在桌面", isOn: $widgetVisible)
+            Toggle("自定义光标", isOn: $cursorThemeEnabled)
             LaunchAtLoginToggle()
             Menu("设置") {
                 if #unavailable(macOS 26) {
@@ -116,6 +119,7 @@ struct MoleWidgetApp: App {
                     Toggle("网络", isOn: $menuBarShowNetwork)
                     Toggle("磁盘",    isOn: $menuBarShowDisk)
                     Toggle("MiniMax 5h", isOn: $menuBarShowMinimax5h)
+                    Toggle("5h 重置倒计时", isOn: $menuBarShowMinimaxReset)
                     Toggle("MiniMax 周", isOn: $menuBarShowMinimaxWeekly)
                     Toggle("工资", isOn: $menuBarShowSalary)
                 }
@@ -159,6 +163,7 @@ private struct MenuBarLabel: View {
     @AppStorage(WidgetSettings.menuBarShowNetworkKey) private var showNetwork = WidgetSettings.defaultMenuBarShowNetwork
     @AppStorage(WidgetSettings.menuBarShowDiskKey)    private var showDisk    = WidgetSettings.defaultMenuBarShowDisk
     @AppStorage(WidgetSettings.menuBarShowMinimax5hKey) private var showMinimax5h = false
+    @AppStorage(WidgetSettings.menuBarShowMinimaxResetKey) private var showMinimaxReset = false
     @AppStorage(WidgetSettings.menuBarShowMinimaxWeeklyKey) private var showMinimaxWeekly = false
     @AppStorage(WidgetSettings.menuBarShowSalaryKey) private var showSalary = WidgetSettings.defaultMenuBarShowSalary
 
@@ -173,6 +178,7 @@ private struct MenuBarLabel: View {
             diskWriteBytesPerSec: store.diskIO?.write,
             minimax5hPercent: minimaxManager.snapshot?.fiveHour?.usedPercent,
             minimaxWeeklyPercent: minimaxManager.snapshot?.weekly?.usedPercent,
+            minimax5hResetSeconds: minimaxManager.snapshot?.fiveHour?.remainsTime,
             salaryToday: salaryManager.snapshot.state == .unconfigured ? nil : salaryManager.snapshot.todayEarned
         )
         let metrics = MenuBarText.metrics(values) { kind in
@@ -183,6 +189,7 @@ private struct MenuBarLabel: View {
             case .network:       return showNetwork
             case .disk:          return showDisk
             case .minimax5h:     return showMinimax5h
+            case .minimaxReset:  return showMinimaxReset
             case .minimaxWeekly: return showMinimaxWeekly
             case .salary:        return showSalary
             }
@@ -323,6 +330,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let minimaxManager = MinimaxManager()
     let salaryManager = SalaryManager()
     let screenshotServices = ScreenshotServices(defaults: UserDefaults.standard)
+    let cursorThemeService = CursorThemeService(defaults: UserDefaults.standard)
     private var minimaxWindow: NSWindow?
     private var minimaxSettingsHost: NSHostingController<MinimaxSettingsView>?
     private var salaryWindow: NSWindow?
@@ -350,6 +358,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         minimaxManager.start()
         salaryManager.start()
         screenshotServices.start()
+        cursorThemeService.start()
 
         // 监听截图设置请求(从编辑器 AI 面板的"前往设置"按钮触发)
         NotificationCenter.default.addObserver(
@@ -415,6 +424,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.syncWindowSize()
                 self?.restartStoreIfIntervalChanged()
                 self?.reconcileVisibility()
+                self?.cursorThemeService.settingDidChange()
             }
         }
     }
@@ -581,5 +591,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         minimaxManager.stop()
         salaryManager.stop()
         screenshotServices.stop()
+        cursorThemeService.stop()
     }
 }
