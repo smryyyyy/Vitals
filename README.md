@@ -360,7 +360,7 @@ MIT License
 
 自定义光标模块参考了 [MaCursor](https://github.com/writronic/MaCursor) 的 CGS 私有 API 实现思路（该项目的 Mousecape 上游是 [alexzielenski/Mousecape](https://github.com/alexzielenski/Mousecape)）。
 
-光标主题 **CatOmen Raiden** 作者 Katana 逸邪（猫饭社区），包内附有作者原始说明与效果图。
+光标主题 **CatOmen Raiden** 作者 Katana 逸邪，包内附有作者原始说明与效果图。
 
 ---
 
