@@ -10,7 +10,12 @@ import Observation
 @Observable
 public final class MinimaxManager {
     /// Latest snapshot, nil before the first successful fetch.
+    /// 拉取失败时**不会**被清空 —— 网络抖一下不该让已经拿到的用量数字和倒计时消失。
     public private(set) var snapshot: MinimaxSnapshot?
+
+    /// 最近一次失败的原因,成功时置 nil。跟 `snapshot` 分开存,
+    /// UI 才能同时显示"旧数据 + 一行错误"。
+    public private(set) var lastError: MinimaxErrorKind?
 
     /// True while a fetch is in flight — the UI uses this to disable the
     /// "立即刷新" button.
@@ -20,16 +25,20 @@ public final class MinimaxManager {
     @ObservationIgnored private var inFlight: Task<Void, Never>?
     @ObservationIgnored private var lastFetchAt: Date?
 
-    /// 1 / 5 / 15 / 30 / 60 minutes. Resolved from UserDefaults each time the
-    /// timer is (re)started so the Settings panel takes effect immediately.
-    public static let interval: TimeInterval = {
+    /// 1 / 5 / 15 / 30 / 60 分钟,单位秒。
+    ///
+    /// 必须是计算属性:之前是 `static let` + 一次性闭包,进程内只求值一次,
+    /// 设置页改频率后 `restart()` 读到的还是缓存值,必须重启应用才生效。
+    /// 现在每次 `start()` 都重新从 UserDefaults 解析。
+    /// `nonisolated`:纯读取,跟主线程无关,这样测试和其它模块都能直接用。
+    public nonisolated static var interval: TimeInterval {
         let raw = UserDefaults.standard.object(forKey: WidgetSettings.minimaxRefreshIntervalKey) as? Double
             ?? WidgetSettings.defaultMinimaxRefreshInterval
         // 范围保护: 落到合法选项里
         let valid = WidgetSettings.minimaxRefreshIntervalOptions
         let clamped = valid.min { abs($0 - raw) < abs($1 - raw) } ?? WidgetSettings.defaultMinimaxRefreshInterval
         return clamped * 60
-    }()
+    }
 
     public init() {}
 
@@ -72,10 +81,24 @@ public final class MinimaxManager {
 
     private func performFetch() async {
         defer { inFlight = nil }
-        guard let credentials = MinimaxKeychain.load(), credentials.isValid else {
-            snapshot = MinimaxSnapshot(error: "未配置")
+
+        let credentials: MinimaxCredentials
+        switch MinimaxKeychain.load() {
+        case .notFound:
+            lastError = .notConfigured
             return
+        case .unavailable:
+            // 钥匙串锁着 / 读不出来 —— 不动 snapshot,只提示解锁
+            lastError = .keychainUnavailable
+            return
+        case .found(let stored):
+            guard stored.isValid else {
+                lastError = .notConfigured
+                return
+            }
+            credentials = stored
         }
+
         isFetching = true
         defer { isFetching = false }
 
@@ -84,10 +107,12 @@ public final class MinimaxManager {
             let response = try await client.fetchUsage()
             snapshot = MinimaxMapper.snapshot(from: response)
             lastFetchAt = Date()
+            lastError = nil
         } catch let error as MinimaxError {
-            snapshot = MinimaxSnapshot(error: error.errorDescription)
+            // 保留上一次的 snapshot:短暂抖动不该把已获取的用量数字一并抹掉
+            lastError = error.kind
         } catch {
-            snapshot = MinimaxSnapshot(error: error.localizedDescription)
+            lastError = .unknown
         }
     }
 }

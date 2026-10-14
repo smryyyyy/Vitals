@@ -13,27 +13,49 @@ import IOKit
 /// No root or entitlement is required — a read-only `AppleSMC` connection is
 /// enough. Being a private API, it rules out App Store sandboxing, which does
 /// not apply to this directly-distributed app.
-public final class SMCTemperature {
+///
+/// `@unchecked Sendable`: `connection` and `cpuKeys` are mutable, but every
+/// access is serialised by `lock`. Safe to hand to the metrics collection queue.
+public final class SMCTemperature: @unchecked Sendable {
+    /// Guards `connection` and `cpuKeys`. This class is reached from the metrics
+    /// collection queue, and once the stores moved off the main actor nothing
+    /// serialises the lazy scan for us any more.
+    private let lock = NSLock()
     private var connection: io_connect_t = 0
-    private var cpuKeys: [UInt32]?  // cached after the first scan
+    private var cpuKeys: [UInt32]?  // cached after the first *successful* scan
+    /// Earliest time a failed scan may be retried, so a Mac that legitimately has
+    /// no `Tp…` keys does not re-walk the whole SMC key list every 30 s.
+    private var scanRetryAfter: Date?
+
+    /// Backoff after a scan that found nothing. Long enough that recovery is
+    /// prompt after a transient failure, short enough that a Mac which gains the
+    /// keys (or a first call that raced the SMC) recovers without a restart.
+    static let rescanRetryDelay: TimeInterval = 300
 
     public init() {
         let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSMC"))
         guard service != 0 else { return }
-        IOServiceOpen(service, mach_task_self_, 0, &connection)
+        var handle: io_connect_t = 0
+        IOServiceOpen(service, mach_task_self_, 0, &handle)
+        lock.lock()
+        connection = handle
+        lock.unlock()
         IOObjectRelease(service)
     }
 
     deinit {
-        if connection != 0 { IOServiceClose(connection) }
+        lock.lock()
+        let handle = connection
+        connection = 0
+        lock.unlock()
+        if handle != 0 { IOServiceClose(handle) }
     }
 
     /// Median of all `Tp…` core sensors, in °C, or `nil` when unavailable.
     public func cpuTemperature() -> Double? {
-        guard connection != 0 else { return nil }
-
-        let keys = cpuKeys ?? discoverCPUKeys()
-        cpuKeys = keys
+        lock.lock()
+        let keys = resolvedKeysLocked()
+        lock.unlock()
         guard !keys.isEmpty else { return nil }
 
         let values = keys.compactMap { key -> Float? in
@@ -43,9 +65,44 @@ public final class SMCTemperature {
         return Self.aggregate(values)
     }
 
-    /// A real die temperature stays around this even under sustained load;
-    /// a median above it means the sensor set is unreliable, so we report `nil`.
-    static let plausibleCeiling: Double = 110
+    /// Returns the cached sensor list, scanning at most once.
+    ///
+    /// The old code wrote the scan result back unconditionally, so a first scan
+    /// that came up empty — the SMC not being ready yet, a key list that failed to
+    /// read — permanently cached "no sensors" and `cpuTemperature()` returned nil
+    /// for the rest of the process. An empty result is now never cached; it only
+    /// sets a retry deadline.
+    ///
+    /// - Important: caller must hold `lock`.
+    private func resolvedKeysLocked() -> [UInt32] {
+        // No AppleSMC at all (Intel Mac): never scan, so this costs nothing per tick.
+        guard connection != 0 else { return [] }
+        if let cached = cpuKeys { return cached }
+
+        if let retryAfter = scanRetryAfter, Date() < retryAfter { return [] }
+        let discovered = discoverCPUKeys()
+        guard !discovered.isEmpty else {
+            scanRetryAfter = Date().addingTimeInterval(Self.rescanRetryDelay)
+            return []
+        }
+        cpuKeys = discovered
+        return discovered
+    }
+
+    /// Number of cached `Tp…` keys, or nil when no scan has succeeded yet.
+    /// Internal so tests can assert the empty-scan regression directly.
+    var cachedKeyCount: Int? {
+        lock.lock()
+        defer { lock.unlock() }
+        return cpuKeys?.count
+    }
+
+    /// A real die temperature stays under this even at the thermal limit — M-series
+    /// parts throttle around 100–105 °C — but the old 110 °C ceiling was tight
+    /// enough to blank the menu-bar reading on a hot machine under sustained load.
+    /// It only has to catch a *whole sensor set* misreporting, which the median
+    /// already handles; the 130 °C per-sensor filter above does the rest.
+    static let plausibleCeiling: Double = 125
 
     /// Robust central temperature from the collected core sensors, in °C, or `nil`.
     ///

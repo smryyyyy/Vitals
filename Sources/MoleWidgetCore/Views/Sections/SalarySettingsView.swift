@@ -51,6 +51,12 @@ public struct SalarySettingsView: View {
                     Text("按中国法定节假日 + 调休自动计算,2027 年数据未更新")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                    // 与浮窗顶部同源:表过期时日薪是按"周一~五"估的,必须让用户看见
+                    if manager.snapshot.tableExpired {
+                        Text("⚠ 节假日表已过期,日薪按周一~五估算,请更新数据")
+                            .font(.caption2)
+                            .foregroundStyle(.red)
+                    }
                 }
 
                 Section("时间") {
@@ -60,6 +66,9 @@ public struct SalarySettingsView: View {
                     timeField(label: "午休结束", date: $lunchEndDate)
                     Toggle("午休计入收入", isOn: $includeLunch)
                         .help("开启:午休时间按工作时计算;关闭:午休时间不算工资")
+                    Text("下班时间早于上班时间时按跨午夜班次计算;加班不计入,超过下班时间后按日薪封顶。")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section("在职累计 (可选)") {

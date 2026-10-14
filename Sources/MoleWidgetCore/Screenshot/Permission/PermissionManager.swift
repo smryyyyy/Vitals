@@ -79,6 +79,22 @@ public final class PermissionManager: ObservableObject {
         accessibilityDecision = Self.readAccessibilityDecision()
     }
 
+    /// 「重新检查」的唯一实现：一次性重读两个权限并对齐快照，返回**当前仍缺失**
+    /// 的目标面板（空数组 = 全部已授权）。
+    ///
+    /// 为什么抽成这一份：P0-4 的截图入口失败态有「重新检查」按钮、P2-20 的设置
+    /// 窗口有「重新检查」按钮 + 应用回前台刷新，三处必须是同一套判定，否则用户
+    /// 会在「按钮说已授权、截图仍然失败」之间来回猜。
+    @discardableResult
+    public func refreshAllDecisions() -> [SystemSettingsDestination] {
+        screenCaptureDecision = Self.readScreenCaptureDecision()
+        accessibilityDecision = Self.readAccessibilityDecision()
+        return Self.missingDestinations(
+            screenCapture: screenCaptureDecision,
+            accessibility: accessibilityDecision
+        )
+    }
+
     /// 只读当前 Screen Capture 授权（不弹窗），不改快照——per-command 路径用。
     public func currentScreenCaptureDecision() -> PermissionDecision {
         Self.readScreenCaptureDecision()
@@ -142,5 +158,35 @@ public final class PermissionManager: ObservableObject {
         AXIsProcessTrusted()
             ? .authorized
             : .denied(recovery: .openSystemSettings(.accessibility))
+    }
+
+    // MARK: - 缺失目标的纯映射(截图主流程 + 设置窗口共用)
+
+    /// 决策 → 需要引导用户去哪个系统设置面板；`.authorized` / `.failed` 不需要引导
+    /// （`.failed` 是检查本身出错，不是权限缺失，跳设置解决不了）。
+    nonisolated static func destination(for decision: PermissionDecision) -> SystemSettingsDestination? {
+        switch decision {
+        case .authorized, .failed:
+            nil
+        case let .denied(recovery):
+            destination(for: recovery)
+        case let .restricted(recovery):
+            recovery.flatMap(destination(for:))
+        }
+    }
+
+    nonisolated static func destination(for recovery: PermissionRecovery) -> SystemSettingsDestination? {
+        switch recovery {
+        case let .openSystemSettings(destination): destination
+        }
+    }
+
+    /// 当前仍缺失的面板列表，屏幕录制优先（它是截图本身的硬门槛，辅助功能只影响
+    /// Carbon 热键注册）。全空 = 可以截图。
+    nonisolated static func missingDestinations(
+        screenCapture: PermissionDecision,
+        accessibility: PermissionDecision
+    ) -> [SystemSettingsDestination] {
+        [destination(for: screenCapture), destination(for: accessibility)].compactMap { $0 }
     }
 }

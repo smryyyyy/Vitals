@@ -22,28 +22,25 @@ public struct MinimaxLimit: Equatable, Codable {
 
 /// Aggregate view of the MiniMax account. The video bucket is intentionally
 /// dropped — only the 5h and weekly counters are surfaced.
+///
+/// 刻意不带 `error` 字段:用量数据和"这次拉取失败"是两件事,失败时不应该把
+/// 上一次成功的数字一起抹掉。失败信息由 `MinimaxManager.lastError` 单独承载。
 public struct MinimaxSnapshot: Equatable, Codable {
     public let fiveHour: MinimaxLimit?
     public let weekly: MinimaxLimit?
     public let fetchedAt: Date
-    public let error: String?
 
     public init(
         fiveHour: MinimaxLimit? = nil,
         weekly: MinimaxLimit? = nil,
-        fetchedAt: Date = Date(),
-        error: String? = nil
+        fetchedAt: Date = Date()
     ) {
         self.fiveHour = fiveHour
         self.weekly = weekly
         self.fetchedAt = fetchedAt
-        self.error = error
     }
 
     public var isEmpty: Bool { fiveHour == nil && weekly == nil }
-
-    /// When the API call or the auth has gone bad — show an error placeholder.
-    public var isError: Bool { error != nil }
 }
 
 /// Authentication trio required by the MiniMax backend. None of the values
@@ -121,5 +118,59 @@ public struct MinimaxUsageResponse: Decodable {
     public enum CodingKeys: String, CodingKey {
         case modelRemains = "model_remains"
         case baseResp = "base_resp"
+    }
+}
+
+// MARK: - 失败分类
+
+/// 拉取失败的分类。UI 按类型选文案和图标,不再靠字符串比对。
+///
+/// 为什么建模:之前所有失败都塞进一个 `error: String?`,认证过期和断网在
+/// 浮窗上长得一模一样,用户只能看到一段话猜下一步该干什么。
+public enum MinimaxErrorKind: Equatable {
+    /// 从没配置过 cookie
+    case notConfigured
+    /// Keychain 里存着,但当前读不出来(锁屏 / 未解锁 / 权限拒绝)
+    case keychainUnavailable
+    /// HTTP 401/403,cookie 过期
+    case authExpired
+    /// 断网 / DNS 解析失败 / 连不上
+    case networkUnavailable
+    /// 请求超时
+    case timeout
+    /// 服务端返回了非 2xx / 非 401 / 403
+    case server(Int)
+    /// 解码失败等其它情况
+    case unknown
+
+    /// 浮窗和设置页共用的文案,保持两边说法一致。
+    public var message: String {
+        switch self {
+        case .notConfigured:       return "未配置,请在 MiniMax 设置里填入 cookie"
+        case .keychainUnavailable: return "钥匙串已锁定,解锁后重试"
+        case .authExpired:         return "认证已过期,请重新登录并更新 cookie"
+        case .networkUnavailable:  return "网络不可用,连不上 minimaxi.com"
+        case .timeout:             return "请求超时,请稍后重试"
+        case .server(let code):    return "服务器返回 \(code)"
+        case .unknown:             return "拉取失败"
+        }
+    }
+
+    /// 浮窗行的前缀图标。认证过期最需要用户处理,用感叹号;网络类用弱化的箭头。
+    public var symbol: String {
+        switch self {
+        case .notConfigured, .keychainUnavailable, .authExpired: return "!"
+        case .networkUnavailable, .timeout: return "↯"
+        case .server: return "!"
+        case .unknown: return "?"
+        }
+    }
+
+    /// 认证类错误需要用户去改设置,不该用和"临时抖动"一样的呈现方式。
+    public var needsUserAction: Bool {
+        switch self {
+        case .notConfigured, .keychainUnavailable, .authExpired: return true
+        default: return false
+        }
     }
 }

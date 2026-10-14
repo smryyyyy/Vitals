@@ -45,7 +45,14 @@ public struct MinimaxClient {
         )
         request.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(for: request)
+        } catch let urlError as URLError {
+            // 断网 / DNS / 超时在这里归一,UI 才有办法区分"该重试"和"该换 cookie"
+            throw MinimaxError.transport(urlError.code)
+        }
 
         guard let http = response as? HTTPURLResponse else {
             throw MinimaxError.invalidResponse
@@ -74,14 +81,40 @@ public enum MinimaxError: LocalizedError, Equatable {
     case httpStatus(Int)
     case decode(Error)
     case invalidResponse
+    /// URLSession 层面的失败(断网 / DNS / TLS / 超时)。在 `fetchUsage` 里
+    /// 把 `URLError` 归一到这一类,避免系统英文文案直接漏到 UI 上。
+    case transport(URLError.Code)
 
     public var errorDescription: String? {
+        kind.message
+    }
+
+    /// 结构化分类。UI 用它选文案和图标,不用再解析字符串。
+    public var kind: MinimaxErrorKind {
         switch self {
-        case .notAuthenticated: return "尚未配置 MiniMax 认证信息"
-        case .unauthorized:     return "认证已过期，请重新登录 platform.minimaxi.com 并更新 cookie"
-        case .httpStatus(let code): return "服务器返回 \(code)"
-        case .decode:           return "返回数据格式错误"
-        case .invalidResponse:  return "无有效响应"
+        case .notAuthenticated:
+            return .notConfigured
+        case .unauthorized:
+            return .authExpired
+        case .httpStatus(let code):
+            return .server(code)
+        case .decode, .invalidResponse:
+            return .unknown
+        case .transport(let code):
+            switch code {
+            case .timedOut:
+                return .timeout
+            case .notConnectedToInternet,
+                 .networkConnectionLost,
+                 .cannotFindHost,
+                 .cannotConnectToHost,
+                 .dnsLookupFailed,
+                 .internationalRoamingOff,
+                 .dataNotAllowed:
+                return .networkUnavailable
+            default:
+                return .unknown
+            }
         }
     }
 
@@ -92,6 +125,7 @@ public enum MinimaxError: LocalizedError, Equatable {
         case (.httpStatus(let a), .httpStatus(let b)): return a == b
         case (.invalidResponse, .invalidResponse): return true
         case (.decode, .decode): return true
+        case (.transport(let a), .transport(let b)): return a == b
         default: return false
         }
     }

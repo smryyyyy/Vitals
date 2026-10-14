@@ -40,7 +40,10 @@ public struct SystemInfoSnapshot: Equatable {
 }
 
 /// Collects static system information via sysctl and ProcessInfo.
-public final class SystemInfoCollector {
+///
+/// `Sendable` (not `@unchecked`): the type stores nothing, so there is no shared
+/// state to protect. Declared so the metrics collection queue can hold it.
+public final class SystemInfoCollector: Sendable {
     public init() {}
 
     /// Samples static hardware/OS information.

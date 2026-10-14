@@ -23,8 +23,12 @@ public final class SalaryManager {
     }
 
     /// 1-second cadence: the live "今日已赚" figure needs per-second updates
-    /// to feel real, and recomputing is cheap (no I/O, no allocations beyond
-    /// a few `Date` math ops).
+    /// to feel real.
+    ///
+    /// 开销说明:重算本身没有 I/O,也不联网;之前"cheap"的印象来自 `isWorkday`
+    /// 没开缓存时每 30 天就要做一次 `String(format:)` 拼 key,而 `totalEarned`
+    /// 在入职 10 年时每轮要扫 120 个月。现在 `ChineseWorkdayCalendar` 按
+    /// (年, 月) 缓存工作日位图,同一秒内的重复重算退化成几次位运算。
     public func start() {
         stop()
         let timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in

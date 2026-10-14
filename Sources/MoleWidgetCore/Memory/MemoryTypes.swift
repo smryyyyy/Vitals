@@ -1,6 +1,6 @@
 /// Raw page counters from vm_statistics64.
-/// The inactive/speculative fields are not used in the current formulas — we capture
-/// the full set so formulas can be updated without modifying the collector.
+/// `inactive`/`speculative` are captured but unused by the current formulas — see
+/// the note in `MemoryUsage` for why AM's App Memory cannot be derived from these.
 public struct VMStats: Equatable {
     public let free: UInt64
     public let active: UInt64
@@ -41,5 +41,7 @@ public struct MemorySnapshot: Equatable {
     }
 
     public var usedFraction: Double { total > 0 ? Double(used) / Double(total) : 0 }
+    /// Complement of `usedFraction` (the two always sum to 1). Not the kernel's
+    /// free memory — see `MemoryUsage` for the full set of definitions.
     public var freeFraction: Double { total > 0 ? Double(free) / Double(total) : 0 }
 }

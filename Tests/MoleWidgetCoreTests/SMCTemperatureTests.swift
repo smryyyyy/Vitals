@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import MoleWidgetCore
 
@@ -21,12 +22,51 @@ import Testing
         #expect(result! < 100)
     }
 
+    /// A machine under sustained load legitimately runs above the old 110 °C cut-off
+    /// (M-series parts throttle around 100–105 °C, sensors read higher), and the old
+    /// threshold blanked the menu-bar figure outright. Real readings must survive.
+    @Test func aggregate_hotButRealReadings_areKept() {
+        #expect(SMCTemperature.aggregate([112, 115, 118]) == 115)
+        #expect(SMCTemperature.aggregate([118, 120, 124]) == 120)
+    }
+
+    /// Only a genuinely impossible *whole sensor set* is dropped.
     @Test func aggregate_allImplausiblyHigh_returnsNil() {
-        // Whole set above the plausibility ceiling → unreliable → dropped.
-        #expect(SMCTemperature.aggregate([115, 118, 120]) == nil)
+        #expect(SMCTemperature.aggregate([126, 128, 129]) == nil)
     }
 
     @Test func aggregate_atCeiling_isKept() {
-        #expect(SMCTemperature.aggregate([110]) == 110)
+        let ceiling = Float(SMCTemperature.plausibleCeiling)
+        #expect(SMCTemperature.aggregate([ceiling]) == Double(ceiling))
+    }
+
+    @Test func plausibleCeiling_isNotTighterThanTheSensorFilter() {
+        // It must stay strictly below the 130 °C per-sensor cut-off, otherwise
+        // values in between are collected and then thrown away as a whole frame.
+        #expect(SMCTemperature.plausibleCeiling < 130)
+    }
+
+    /// The headline regression. The old code wrote the scan result back
+    /// unconditionally, so a first scan that found nothing cached `[]` and every
+    /// later `cpuTemperature()` returned nil for the life of the process — no amount
+    /// of retrying could recover it. The cache must now be either nil or populated.
+    @Test func emptyScanIsNeverCached() {
+        let smc = SMCTemperature()
+        for _ in 0..<3 { _ = smc.cpuTemperature() }
+        if let count = smc.cachedKeyCount {
+            #expect(count > 0)
+        }
+    }
+
+    /// Repeated reads must be stable and must not throw; on a Mac with working SMC
+    /// hardware the value stays inside the per-sensor filter.
+    @Test func repeatedReadsAreStable() {
+        let smc = SMCTemperature()
+        let first = smc.cpuTemperature()
+        let second = smc.cpuTemperature()
+        #expect(first == second)
+        if let first {
+            #expect(first > 0 && first < 130)
+        }
     }
 }

@@ -123,10 +123,20 @@ public struct ScreenshotSettingsView: View {
         .onReceive(manager.settings.objectWillChange) { _ in
             settingsChangeTick &+= 1
         }
-        // App 切回前台时(用户在系统设置里授权后回来)重读真实状态。
+        // P2-20:权限快照不再只在 onAppear 时读一次。
+        //   · `NSApplication.didBecomeActiveNotification`:本进程重新激活。
+        //   · `NSWorkspace.didActivateApplicationNotification`(任意应用被激活,含
+        //     系统设置):浮窗应用没有可靠的自身激活事件,用户在系统设置里改完授权
+        //     切回来时靠它兜底。两个方向(授权 / 撤权)都覆盖 ——
+        //     `refreshAllDecisions()` 无条件重读真实状态,不做方向判断。
+        //   · 「重新检查」按钮:用户未必想切换应用,就在窗口里当场点一下。
+        // 三者复用 `PermissionManager.refreshAllDecisions()`,和 P0-4 截图失败态的
+        // 「重新检查」是同一份判定,避免两处结论不一致。
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            manager.permissionManager.refreshScreenCaptureDecision()
-            manager.permissionManager.refreshAccessibilityDecision()
+            manager.permissionManager.refreshAllDecisions()
+        }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didActivateApplicationNotification)) { _ in
+            manager.permissionManager.refreshAllDecisions()
         }
     }
 
@@ -140,8 +150,7 @@ public struct ScreenshotSettingsView: View {
         .onAppear {
             // 每次 view 出现都主动刷新一次权限快照 —— `.onAppear` 重新打开窗口也会触发,
             // 此时用户可能已经从系统设置里改过授权。
-            manager.permissionManager.refreshScreenCaptureDecision()
-            manager.permissionManager.refreshAccessibilityDecision()
+            manager.permissionManager.refreshAllDecisions()
         }
     }
 
@@ -169,10 +178,20 @@ public struct ScreenshotSettingsView: View {
                     _ = manager.permissionManager.requestAccessibility()
                 }
             )
-            Text("全局快捷键依赖这两项权限。未授权时按 ⌘⇧2 / ⌃⌥⇧A 会被系统静默拦截。")
-                .font(.system(size: 10))
-                .foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Text("说明")
+                    .frame(width: 100, alignment: .leading)
+                Text("全局快捷键依赖这两项权限。未授权时按 ⌘⇧2 / ⌃⌥⇧A 会被系统静默拦截。")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                // P2-20:权限快照是「读一次就旧」的缓存值,系统设置里改完回来用户
+                // 未必想切换应用;给一个当场重查的出口,和截图失败态的按钮同一套逻辑。
+                Button("重新检查") {
+                    manager.permissionManager.refreshAllDecisions()
+                }
+            }
         }
     }
 

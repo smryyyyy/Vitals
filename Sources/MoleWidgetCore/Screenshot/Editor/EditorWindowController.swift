@@ -271,15 +271,28 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
                 after: recovery.cumulativeOutcome
             )
             guard let self, self.deliveryOperationID == operationID else { return }
-            self.clearDeliveryOperation(cancelTask: false)
-            self.feedbackPresenter.present(
-                .delivered(
-                    id: CaptureFeedbackID(),
-                    source: .editorFinish,
-                    summary: .project(from: outcome),
-                    soundEnabled: false
+            // P1-11:收尾(deliveryTask / deliveryOperationID / watchdog)必须无条件执行,
+            // 用 defer 保证下面新增任何分支都不会漏掉清理。
+            defer { self.clearDeliveryOperation(cancelTask: false) }
+            if outcome.completion == .failed {
+                // 全部 sink 都失败(如剪贴板被其它应用独占):报的是「失败」而不是
+                // 「已交付」,否则策略层会给用户一条语义相反的反馈。
+                self.feedbackPresenter.present(
+                    .failed(
+                        id: CaptureFeedbackID(rawValue: operationID),
+                        failure: .delivery(.project(from: outcome))
+                    )
                 )
-            )
+            } else {
+                self.feedbackPresenter.present(
+                    .delivered(
+                        id: CaptureFeedbackID(rawValue: operationID),
+                        source: .editorFinish,
+                        summary: .project(from: outcome),
+                        soundEnabled: false
+                    )
+                )
+            }
             switch outcome.completion {
             case .complete:
                 self.deliveryRecovery = nil
@@ -291,9 +304,11 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
                 )
                 self.editorState.enterRecovery()
             case .failed, .cancelled:
-                preconditionFailure(
-                    "A retry from a partial receipt must retain at least one successful sink"
-                )
+                // P1-11:原来这里是 preconditionFailure —— Debug 直接崩、Release 静默卡在
+                // .retrying。这里改成正常失败态收敛:丢掉 recovery、回可编辑,
+                // 用户改完再点一次「完成」,不会留下一个永远转圈的编辑器。
+                self.deliveryRecovery = nil
+                self.editorState.returnToEditing()
             }
         }
     }

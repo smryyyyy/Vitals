@@ -9,6 +9,9 @@
 //  - 断言锚定在实测数据上(不是猜测值),见每个 case 的注释。
 //  - 解析失败必须抛具体 error case,不许静默返回空 —— 错误路径用例验证这点。
 //
+//  ⚠️ 故意没有覆盖的:`CGSCursorBridge`。它一被调用就会真的改掉本机的鼠标指针,
+//  而 CI/测试环境里光标坏掉没法自救,所以注册路径只能手测。见 CURSOR.md「跑测试」。
+//
 
 import Foundation
 import CoreGraphics
@@ -323,5 +326,98 @@ import Testing
         #expect(throws: ANIThemeLoader.LoadError.badCursorData) {
             try ANIThemeLoader.parse(data: file)
         }
+    }
+
+    // MARK: - Test 11:超大尺寸的 DIB 被拒绝
+
+    /// 构造一个只含 1 帧的 .ani,帧里的 DIB 头**声称** `width × height` 这么大,
+    /// 但 payload 里只有 BITMAPINFOHEADER 那 40 字节、没有像素数据。
+    ///
+    /// 关键在于检查顺序:尺寸上限必须**先于**缓冲区分配触发,所以即使文件里
+    /// 根本没有那么多像素字节,也必须报 `.imageTooLarge` 而不是 `.truncated`
+    /// 或直接去分配 `width * height * 4`。
+    private static func aniWithDIBClaiming(width: Int32, pixelHeight: Int32) -> Data {
+        func leU32(_ v: UInt32) -> [UInt8] {
+            [UInt8(v & 0xFF), UInt8((v >> 8) & 0xFF), UInt8((v >> 16) & 0xFF), UInt8((v >> 24) & 0xFF)]
+        }
+        func leI32(_ v: Int32) -> [UInt8] { leU32(UInt32(bitPattern: v)) }
+
+        // BITMAPINFOHEADER(40B):height 写双倍值,真实像素行数 = height / 2。
+        var dib = Data()
+        dib.append(contentsOf: leU32(40))                       // biSize
+        dib.append(contentsOf: leI32(width))                    // biWidth
+        dib.append(contentsOf: leI32(pixelHeight * 2))          // biHeight(双倍)
+        dib.append(contentsOf: [0x01, 0x00])                   // biPlanes
+        dib.append(contentsOf: [0x20, 0x00])                   // biBitCount = 32
+        dib.append(contentsOf: [UInt8](repeating: 0, count: 40 - dib.count))
+
+        // ICONDIR + 一条 ICONDIRENTRY,payload 紧跟在 22 字节目录之后。
+        var cursor = Data()
+        cursor.append(contentsOf: [0x00, 0x00])                // idReserved
+        cursor.append(contentsOf: [0x02, 0x00])                // idType = CUR
+        cursor.append(contentsOf: [0x01, 0x00])                // idCount
+        cursor.append(contentsOf: [0x20, 0x20, 0x00, 0x00])    // 32x32, 0 色, reserved
+        cursor.append(contentsOf: [0x01, 0x00, 0x01, 0x00])    // hotspot (1,1)
+        cursor.append(contentsOf: leU32(UInt32(dib.count)))     // dwBytesInRes
+        cursor.append(contentsOf: leU32(UInt32(22)))            // dwImageOffset
+        cursor.append(dib)
+
+        var frameList = Data("fram".utf8)
+        frameList.append(contentsOf: Array("icon".utf8))
+        frameList.append(contentsOf: leU32(UInt32(cursor.count)))
+        frameList.append(cursor)
+
+        var anih = Data()
+        anih.append(contentsOf: leU32(36))                      // cbSize
+        anih.append(contentsOf: [0x18, 0x00])                  // flags
+        anih.append(contentsOf: leU32(1))                       // nFrames
+        anih.append(contentsOf: leU32(1))                       // nSteps
+        anih.append(contentsOf: [UInt8](repeating: 0, count: 36 - anih.count))
+
+        var body = Data("ACON".utf8)
+        body.append(contentsOf: Array("anih".utf8))
+        body.append(contentsOf: leU32(36))
+        body.append(anih)
+        body.append(contentsOf: Array("LIST".utf8))
+        body.append(contentsOf: leU32(UInt32(frameList.count)))
+        body.append(frameList)
+
+        var file = Data("RIFF".utf8)
+        file.append(contentsOf: leU32(UInt32(body.count)))
+        file.append(body)
+        return file
+    }
+
+    /// 一个声称 4096×4096 的帧必须在分配缓冲区**之前**被拒掉。
+    /// 4096² × 4B ≈ 64 MB,放任下去就是在主线程上凭空吃掉这么多内存。
+    @Test func rejectsOversizedDIBBeforeAllocating() {
+        let file = Self.aniWithDIBClaiming(width: 4096, pixelHeight: 4096)
+        #expect(throws: ANIThemeLoader.LoadError.imageTooLarge) {
+            try ANIThemeLoader.parse(data: file)
+        }
+    }
+
+    /// 上限按"宽或高任一超限"判定,单边超限也要挡住。
+    @Test func rejectsOversizedDIBOnEitherAxis() {
+        #expect(throws: ANIThemeLoader.LoadError.imageTooLarge) {
+            try ANIThemeLoader.parse(data: Self.aniWithDIBClaiming(
+                width: 8, pixelHeight: Int32(ANIThemeLoader.maximumFrameDimension) + 1))
+        }
+        #expect(throws: ANIThemeLoader.LoadError.imageTooLarge) {
+            try ANIThemeLoader.parse(data: Self.aniWithDIBClaiming(
+                width: Int32(ANIThemeLoader.maximumFrameDimension) + 1, pixelHeight: 8))
+        }
+    }
+
+    /// 上限本身要留得住真光标:CUR 格式自身的上限是 256,阈值 512 是它的两倍,
+    /// 所以任何合法光标都不该被这个检查误伤。样本是 32×32,远在阈值之内。
+    @Test func dimensionCeilingIsWideEnoughForRealCursors() throws {
+        #expect(ANIThemeLoader.maximumFrameDimension >= 256,
+                "阈值必须至少覆盖 CUR 格式自身的 256 上限")
+        let theme = try ANIThemeLoader.load(url: Self.cursorURL("Normal Select.ani"))
+        #expect(theme.frames.allSatisfy { frame in
+            frame.image.width <= ANIThemeLoader.maximumFrameDimension
+                && frame.image.height <= ANIThemeLoader.maximumFrameDimension
+        })
     }
 }

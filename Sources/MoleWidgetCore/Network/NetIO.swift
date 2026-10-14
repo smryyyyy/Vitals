@@ -8,8 +8,10 @@ public enum NetIO {
         interval: TimeInterval
     ) -> NetIORates {
         guard interval > 0 else { return NetIORates(download: 0, upload: 0) }
-        // Counter reset (interface reconnect, reboot) causes current < previous —
-        // treat such a delta as zero, otherwise the unsigned subtraction yields ~18 EB/s.
+        // Counter reset (reboot, macOS restarting the network stack) makes current
+        // < previous — treat such a delta as zero, otherwise the unsigned subtraction
+        // yields ~18 EB/s. Plain 32-bit `if_data` wraparound no longer reaches here:
+        // NetworkCollector folds those into a monotonic total before calling us.
         let deltaIn = current.bytesIn >= previous.bytesIn
             ? current.bytesIn - previous.bytesIn : 0
         let deltaOut = current.bytesOut >= previous.bytesOut

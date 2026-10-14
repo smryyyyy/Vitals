@@ -141,6 +141,10 @@ public final class CursorThemeService {
     private let defaults: UserDefaults
     private var observers: [NSObjectProtocol] = []
     private var isApplied = false
+    /// Guards against a second `apply()` starting while one is on the stack.
+    private var isApplying = false
+    /// The wake-triggered re-apply that has not run yet, if any.
+    private var pendingWakeReapply: DispatchWorkItem?
 
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -180,10 +184,13 @@ public final class CursorThemeService {
         }
         observers.removeAll()
 
+        // Drop any re-apply that was queued by a wake notification: the
+        // observers are gone, so the theme is off and must not come back.
+        pendingWakeReapply?.cancel()
+        pendingWakeReapply = nil
+
         if isApplied {
-            CGSCursorBridge.unregisterAll()
-            CGSCursorBridge.instantiateSystemCursors()
-            CGSCursorBridge.reload(dockOverride: false)
+            Self.restoreSystemCursors(reason: "stop")
             isApplied = false
             Self.logger.info("Restored system cursors")
         }
@@ -203,6 +210,20 @@ public final class CursorThemeService {
     // MARK: - Application
 
     private func apply() {
+        // Re-entrancy guard. The wake notification is delivered on the main
+        // queue, so an apply that is still on the stack cannot normally be
+        // re-entered — but a nested run-loop turn inside a CGS call could do
+        // it, and two overlapping applies would interleave one batch of
+        // `register` with another's `unregisterAll`, leaving slots
+        // unregistered. An unregistered slot repaints blank, which is exactly
+        // how the pointer disappears.
+        guard !isApplying else {
+            Self.logger.info("A cursor apply is already in progress; ignoring the overlapping request")
+            return
+        }
+        isApplying = true
+        defer { isApplying = false }
+
         guard CGSCursorBridge.isAvailable else {
             health = .apiUnavailable
             return
@@ -245,16 +266,18 @@ public final class CursorThemeService {
         }
 
         guard !pending.isEmpty else {
-            CGSCursorBridge.unregisterAll()
-            CGSCursorBridge.instantiateSystemCursors()
-            CGSCursorBridge.reload(dockOverride: false)
+            Self.restoreSystemCursors(reason: "没有可用的光标文件")
+            isApplied = false
             health = .resourcesMissing
             Self.logger.error("No cursor could be prepared; system defaults restored")
             return
         }
 
-        CGSCursorBridge.unregisterAll()
+        let cleared = CGSCursorBridge.unregisterAll()
         CGSCursorBridge.instantiateSystemCursors()
+        if !cleared {
+            Self.logger.error("Pre-apply CoreCursorUnregisterAll did not complete; continuing with registration anyway")
+        }
 
         var appliedFiles = 0
         Self.logger.info("Cleared system cursors; registering \(pending.count) source file(s)")
@@ -288,9 +311,8 @@ public final class CursorThemeService {
         // Roll back rather than leave a half-applied theme: an unregistered
         // slot repaints as blank, which is what makes the pointer disappear.
         guard applied > 0 else {
-            CGSCursorBridge.unregisterAll()
-            CGSCursorBridge.instantiateSystemCursors()
-            CGSCursorBridge.reload(dockOverride: false)
+            Self.restoreSystemCursors(reason: lastFailure ?? "全部注册失败")
+            isApplied = false
             health = .registrationFailed(reason: lastFailure ?? "全部注册失败")
             Self.logger.error("All registrations failed; system defaults restored")
             return
@@ -308,6 +330,30 @@ public final class CursorThemeService {
         Self.logger.info("Applied \(applied) cursor registration(s) for \(Self.catalog.count) source file(s)")
     }
 
+    // MARK: - Rollback
+
+    /// The single restore path. Every "give up and put the system cursor back"
+    /// branch goes through here, so the three steps can never be reordered or
+    /// partially omitted:
+    ///
+    /// 1. drop this process's registrations,
+    /// 2. re-instantiate the built-in slots `0...43`,
+    /// 3. `reload(dockOverride: false)` — the scale nudge that makes the
+    ///    window server actually repaint, and which now always ends in
+    ///    `CGSSetSystemDefinedCursor(conn, 0)` via a `defer`.
+    ///
+    /// Step 3 runs even when step 1 reports failure: a failed unregister does
+    /// not un-stick the server, so skipping the repaint would be exactly the
+    /// outcome that leaves the pointer invisible.
+    private static func restoreSystemCursors(reason: String) {
+        let unregistered = CGSCursorBridge.unregisterAll()
+        CGSCursorBridge.instantiateSystemCursors()
+        CGSCursorBridge.reload(dockOverride: false)
+        if !unregistered {
+            Self.logger.error("Rollback after \"\(reason, privacy: .public)\"): CoreCursorUnregisterAll never succeeded; system cursors were re-instantiated and selected anyway, but custom slots may remain registered")
+        }
+    }
+
     // MARK: - Frame flattening
 
     /// A registration-ready frame strip plus the uniform duration CGS accepts.
@@ -316,6 +362,15 @@ public final class CursorThemeService {
         let frameCount: Int
         let frameDuration: CGFloat
     }
+
+    /// Hard ceiling on the flattened strip, in pixels.
+    ///
+    /// The strip is `width × (height × frameCount)`, so a per-frame dimension
+    /// cap alone still allows `512 × 12288` — at 4 bytes per pixel that is
+    /// 25 MB allocated on the main thread from one asset. This product cap
+    /// catches the combination. The bundled themes are 32 × 768 = 24 576
+    /// pixels, three orders of magnitude below it.
+    private static let maximumStripPixels = 1 << 20
 
     /// CGS wants one vertical strip (`height == width * frameCount`) and a single
     /// duration for every frame, so the loader's per-step timings collapse to
@@ -329,12 +384,27 @@ public final class CursorThemeService {
         let count = min(frames.count, ANIThemeLoader.maximumFrameCount)
         guard width > 0, height > 0, count > 0 else { return nil }
 
+        // Per-frame ceiling. The loader enforces the same limit while parsing,
+        // but the `CGContext` below is allocated on the main thread and must
+        // not depend on the parser having done its job.
+        guard width <= ANIThemeLoader.maximumFrameDimension,
+              height <= ANIThemeLoader.maximumFrameDimension else {
+            Self.logger.error("Refusing to flatten \(width)x\(height) frames; over the \(ANIThemeLoader.maximumFrameDimension)-pixel dimension ceiling")
+            return nil
+        }
+
+        let stripHeight = height * count
+        let stripPixels = width * stripHeight
+        guard stripPixels <= maximumStripPixels else {
+            Self.logger.error("Refusing to build a \(width)x\(stripHeight) frame strip (\(stripPixels) pixels); over the \(maximumStripPixels)-pixel ceiling")
+            return nil
+        }
+
         let duration = parsed.frameDurations.isEmpty
             ? 0.1
             : parsed.frameDurations.prefix(count).reduce(0, +)
                 / CGFloat(min(parsed.frameDurations.count, count))
 
-        let stripHeight = height * count
         guard let context = CGContext(
             data: nil,
             width: width,
@@ -387,6 +457,15 @@ public final class CursorThemeService {
 
     // MARK: - Notifications
 
+    /// Grace period between the wake notification and the re-apply.
+    ///
+    /// `didWake` is posted while the window server is still coming back, and a
+    /// CGS call issued from inside the notification handler can block on it for
+    /// an unbounded time, freezing the main thread with no way out. Handing the
+    /// work to the main queue lets the run loop — and the window-server
+    /// notification it is currently delivering — finish first.
+    private static let wakeReapplyDelay: TimeInterval = 0.25
+
     private func installObservers() {
         guard observers.isEmpty else { return }
         let center = NotificationCenter.default
@@ -402,9 +481,27 @@ public final class CursorThemeService {
 
     private func reapplyAfterWake() {
         guard WidgetSettings.isCursorThemeEnabled(in: defaults), CGSCursorBridge.isAvailable else { return }
-        Self.logger.info("System woke; re-applying cursor theme")
-        // Synchronous for the same reason as `start()`: registration from a
-        // detached `Task` returns success but never paints.
-        apply()
+
+        // Coalescing, so a burst of wake notifications cannot stack several
+        // applies. `cancel()` on a `DispatchWorkItem` that has not started yet
+        // guarantees its block never runs; on one that already ran it is a
+        // no-op, which is the harmless case.
+        pendingWakeReapply?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            // `stop()` may have run between scheduling and execution. It
+            // removes the observers, so an empty list means the theme is off
+            // and must not be re-applied on top of the user's decision.
+            guard !self.observers.isEmpty else { return }
+            self.pendingWakeReapply = nil
+            self.reapplyAfterWake()
+        }
+        pendingWakeReapply = work
+        // Dispatched to the **main queue**, so this still runs on the main
+        // thread and still uses this process's own CGS connection. This is
+        // explicitly not the `Task`-based path documented as broken in
+        // `start()` — that one changed execution context, this one does not.
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.wakeReapplyDelay, execute: work)
+        Self.logger.info("System woke; re-applying cursor theme in \(Self.wakeReapplyDelay)s")
     }
 }

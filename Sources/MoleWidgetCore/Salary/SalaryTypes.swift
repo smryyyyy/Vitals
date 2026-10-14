@@ -16,7 +16,9 @@ public struct SalarySettings: Equatable, Codable {
     public var lunchEndMinute: Int
     /// true = 午休算工作时间(分母不变),false = 午休不算(分母减午休)
     public var includeLunchInEarnings: Bool
-    /// 入职日期(可选),用于算在职累计
+    /// 入职日期(可选),用于算在职累计。
+    /// nil = 用户没填,此时 `totalEarned` 恒为 0,视图按本字段是否为空决定
+    /// 是否展示「在职累计」这一行 —— 显示 0 会让用户误以为工作了 10 年却没赚到钱。
     public var hireDate: Date?
 
     public init(
@@ -42,11 +44,47 @@ public struct SalarySettings: Equatable, Codable {
         monthlyNetSalary > 0
     }
 
-    /// 每日应工作时数(含/不含午休)
+    // MARK: - 跨午夜班次归一化
+
+    /// 下班时刻是否落在次日(跨午夜班次,如 22:00 → 02:00)。
+    /// 表单只提供「当天第几分钟」,凌晨的下班时分在数值上小于上班时分,
+    /// 必须靠这个判定把它归到次日,否则班次时长会算成负数。
+    public var clockOutIsNextDay: Bool {
+        clockOutMinute < clockInMinute
+    }
+
+    /// 把一个「当天第几分钟」换算到班次时间轴上。
+    /// 跨午夜时,任何小于上班时刻的分值都属于次日,补 1440 分钟。
+    public func normalizedMinute(_ minute: Int) -> Int {
+        (clockOutIsNextDay && minute < clockInMinute) ? minute + 1440 : minute
+    }
+
+    public var normalizedClockInMinute: Int { clockInMinute }
+    public var normalizedClockOutMinute: Int { normalizedMinute(clockOutMinute) }
+    public var normalizedLunchStartMinute: Int { normalizedMinute(lunchStartMinute) }
+    public var normalizedLunchEndMinute: Int { normalizedMinute(lunchEndMinute) }
+
+    /// 当日班次时长(分钟)。跨午夜时下班算到次日,所以是 1440 + 差值。
+    /// 加班不计入:超出 `normalizedClockOutMinute` 之后不再累加。
+    public var shiftMinutes: Int {
+        max(0, normalizedClockOutMinute - normalizedClockInMinute)
+    }
+
+    /// 应从班次里扣掉的午休分钟数(午休计入收入时为 0)。
+    public var excludedLunchMinutes: Int {
+        includeLunchInEarnings ? 0 : max(0, normalizedLunchEndMinute - normalizedLunchStartMinute)
+    }
+
+    /// 每日应工作时数(含/不含午休)。
+    /// 跨午夜班次走归一化后的时刻,保证「下班时刻的 earned 恰好等于日薪」这条性质
+    /// 在夜班下依然成立:时薪 = 日薪 / 班次小时数。
     public var dailyWorkHours: Double {
-        let totalMin = clockOutMinute - clockInMinute
-        let lunchMin = includeLunchInEarnings ? 0 : (lunchEndMinute - lunchStartMinute)
-        return Double(max(0, totalMin - lunchMin)) / 60.0
+        Double(max(0, shiftMinutes - excludedLunchMinutes)) / 60.0
+    }
+
+    /// 每日应工作秒数,分母与 `dailyWorkHours` 同源。
+    public var dailyWorkSeconds: Double {
+        Double(max(0, shiftMinutes - excludedLunchMinutes)) * 60.0
     }
 }
 

@@ -527,6 +527,170 @@ import Testing
                 "9/9 23:59 vs 9/10 00:01 不应跳变超过 1 天日薪,实际: end=\(endOfDay.monthEarned), start=\(startOfNext.monthEarned)")
     }
 
+    // MARK: - 跨午夜班次(P0-5)
+
+    /// 夜班设置:22:00 上班 → 02:00 下班(4 小时),2024-06 有 19 个工作日 → daily = 21000/19
+    private static let nightShift = SalarySettings(
+        monthlyNetSalary: 21000,
+        clockInMinute: 22 * 60,
+        clockOutMinute: 2 * 60,
+        lunchStartMinute: 12 * 60,
+        lunchEndMinute: 13 * 60,
+        includeLunchInEarnings: true,
+        hireDate: nil
+    )
+
+    @Test func nightShift_dailyWorkHours_isFour() {
+        // 修复前:clockOut - clockIn = 120 - 1320 < 0 → 时薪为 0,今日已赚恒为 0
+        #expect(abs(Self.nightShift.dailyWorkHours - 4.0) < 0.0001)
+        #expect(Self.nightShift.clockOutIsNextDay == true)
+        // 下班时刻归一化到 26:00 = 次日 02:00
+        #expect(Self.nightShift.normalizedClockOutMinute == 2 * 60 + 1440)
+    }
+
+    @Test func nightShift_workingAt23_progressGreaterThanZero() {
+        // 2024-06-03 (Mon) 23:00,已上 1 小时 / 共 4 小时
+        let snap = SalaryEngine.compute(settings: Self.nightShift, now: Self.date(2024, 6, 3, 23, 0))
+        #expect(snap.state == .working)
+        #expect(snap.progress > 0, "23:00 时进度必须大于 0,实际:\(snap.progress)")
+        #expect(abs(snap.progress - (3600.0 / (4 * 3600.0))) < 0.0001)
+        #expect(snap.todayEarned > 0, "23:00 时今日已赚必须大于 0")
+        #expect(abs(snap.todayEarned - snap.todayDaily / 4.0) < 0.0001)
+        #expect(snap.timeToWorkStart == nil, "夜班中不该再显示'距上班'")
+    }
+
+    @Test func nightShift_afterMidnight_stillCountsSameShift() {
+        // 2024-06-04 01:00 属于 6/3 那一班:已上 3 小时 / 共 4 小时
+        let snap = SalaryEngine.compute(settings: Self.nightShift, now: Self.date(2024, 6, 4, 1, 0))
+        #expect(snap.state == .working)
+        #expect(abs(snap.progress - (3.0 * 3600.0 / (4 * 3600.0))) < 0.0001)
+        #expect(abs(snap.todayEarned - snap.todayDaily * 0.75) < 0.0001)
+    }
+
+    @Test func nightShift_clockOut_earnedEqualsDaily() {
+        // 次日 02:00 恰好是这一班的下班时刻 —— 当天已赚必须等于日薪
+        let snap = SalaryEngine.compute(settings: Self.nightShift, now: Self.date(2024, 6, 4, 2, 0))
+        #expect(snap.state == .afterWork)
+        #expect(abs(snap.todayEarned - snap.todayDaily) < 0.0001,
+                "下班时刻 earned 应等于日薪,实际:earned=\(snap.todayEarned), daily=\(snap.todayDaily)")
+        #expect(snap.progress == 1.0)
+    }
+
+    @Test func nightShift_beforeClockIn_nextShiftCountdown() {
+        // 02:00 之后到 22:00 之间,应该看当天 22:00 那一班
+        let snap = SalaryEngine.compute(settings: Self.nightShift, now: Self.date(2024, 6, 4, 12, 0))
+        #expect(snap.state == .beforeWork)
+        #expect(snap.todayEarned == 0)
+        #expect(snap.timeToWorkStart != nil)
+        #expect(abs(snap.timeToWorkStart! - (10 * 3600)) < 1)  // 12:00 → 22:00
+    }
+
+    @Test func nightShift_progressMonotonic() {
+        // 修复前整条曲线恒为 0;修复后必须单调递增
+        let s1 = SalaryEngine.compute(settings: Self.nightShift, now: Self.date(2024, 6, 3, 22, 30))
+        let s2 = SalaryEngine.compute(settings: Self.nightShift, now: Self.date(2024, 6, 3, 23, 30))
+        let s3 = SalaryEngine.compute(settings: Self.nightShift, now: Self.date(2024, 6, 4, 0, 30))
+        #expect(s1.progress < s2.progress)
+        #expect(s2.progress < s3.progress)
+    }
+
+    @Test func nightShift_dayOffOnSaturdayMorning() {
+        // 2024-06-08 (Sat) 01:00:业务日是 6/7 (Fri) 工作日 → 上班中,不是休息日
+        let snap = SalaryEngine.compute(settings: Self.nightShift, now: Self.date(2024, 6, 8, 1, 0))
+        #expect(snap.state == .working)
+        // 2024-06-09 (Sun) 01:00:业务日是 6/8 (Sat) → 休息日
+        let off = SalaryEngine.compute(settings: Self.nightShift, now: Self.date(2024, 6, 9, 1, 0))
+        #expect(off.state == .dayOff)
+    }
+
+    @Test func nightShift_lunchAcrossMidnight_isDeducted() {
+        // 夜班 22:00 → 02:00,午休 00:30-01:30 属于次日 → 班次 4h - 午休 1h = 3h
+        var s = Self.nightShift
+        s.lunchStartMinute = 30        // 次日 00:30
+        s.lunchEndMinute = 90          // 次日 01:30
+        s.includeLunchInEarnings = false
+        #expect(abs(s.dailyWorkHours - 3.0) < 0.0001)
+        #expect(s.normalizedLunchStartMinute == 30 + 1440)
+        #expect(s.normalizedLunchEndMinute == 90 + 1440)
+
+        // 次日 01:00 正在午休中,进度冻结在上班后 2.5 小时(22:00 → 00:30)/ 共 3 小时
+        let snap = SalaryEngine.compute(settings: s, now: Self.date(2024, 6, 4, 1, 0))
+        #expect(snap.state == .onLunch)
+        #expect(abs(snap.progress - (2.5 * 3600.0 / (3 * 3600.0))) < 0.0001)
+        // 下班时刻(次日 02:00)earned 仍然 == 日薪
+        let end = SalaryEngine.compute(settings: s, now: Self.date(2024, 6, 4, 2, 0))
+        #expect(end.state == .afterWork)
+        #expect(abs(end.todayEarned - end.todayDaily) < 0.0001)
+    }
+
+    @Test func nightShift_dayShiftConfigUnaffected() {
+        // 非跨午夜配置下 businessDayStart 必须恒等于今天 0 点(回归保护)
+        let snap = SalaryEngine.compute(settings: Self.defaultSettings, now: Self.date(2024, 6, 4, 1, 0))
+        #expect(snap.state == .beforeWork)
+        #expect(abs(snap.timeToWorkStart! - (8 * 3600)) < 1)  // 01:00 → 09:00
+    }
+
+    @Test func dayShift_clockOut_earnedEqualsDaily() {
+        // 原有性质:下班时刻 earned == 日薪(修复不能破坏它)
+        let snap = SalaryEngine.compute(settings: Self.defaultSettings, now: Self.date(2024, 6, 3, 18, 0))
+        #expect(abs(snap.todayEarned - snap.todayDaily) < 0.0001)
+        // 午休不计收入时同样成立:17:30-18:00 午休不计,18:00 已下班
+        var s = Self.defaultSettings
+        s.includeLunchInEarnings = false
+        let noLunch = SalaryEngine.compute(settings: s, now: Self.date(2024, 6, 3, 18, 0))
+        #expect(noLunch.state == .afterWork)
+        #expect(abs(noLunch.todayEarned - noLunch.todayDaily) < 0.0001)
+    }
+
+    // MARK: - 工作日缓存(逐位图实现 vs 逐日判定必须一致)
+
+    @Test func calendar_workdaysBetween_matchesDayByDay() {
+        // 缓存位图是重写实现,这里拿逐日 isWorkday 当基准做交叉验证
+        for (y, m) in [(2024, 2), (2024, 10), (2025, 1), (2026, 2), (2026, 10)] {
+            let cal = ChineseWorkdayCalendar.calendar
+            let start = cal.date(from: DateComponents(year: y, month: m, day: 1))!
+            let end = cal.date(byAdding: .month, value: 1, to: start)!
+            var expected = 0
+            var d = start
+            while d < end {
+                if ChineseWorkdayCalendar.isWorkday(d) { expected += 1 }
+                guard let next = cal.date(byAdding: .day, value: 1, to: d) else { break }
+                d = next
+            }
+            #expect(ChineseWorkdayCalendar.monthWorkdays(year: y, month: m) == expected,
+                    "\(y)-\(m) 工作日数应与逐日判定一致")
+        }
+    }
+
+    @Test func calendar_workdaysBetween_partialRanges() {
+        let cal = ChineseWorkdayCalendar.calendar
+        // 2024-06-01(Sat) → 2024-06-10(Mon) 不含 6/10:工作日 = 6/3-6/7 = 5
+        let from = cal.date(from: DateComponents(year: 2024, month: 6, day: 1))!
+        let to = cal.date(from: DateComponents(year: 2024, month: 6, day: 10))!
+        #expect(ChineseWorkdayCalendar.workdaysBetween(from: from, to: to) == 5)
+
+        // 区间内带时分(旧实现靠逐日 +1 天带时分走)结果必须一致
+        let fromNoon = cal.date(from: DateComponents(year: 2024, month: 6, day: 3, hour: 19, minute: 30))!
+        #expect(ChineseWorkdayCalendar.workdaysBetween(from: fromNoon, to: to) == 5)
+
+        // 跨月:5/31(Fri) → 6/3(Mon) 不含 6/3 = 1
+        let may31 = cal.date(from: DateComponents(year: 2024, month: 5, day: 31))!
+        let jun3 = cal.date(from: DateComponents(year: 2024, month: 6, day: 3))!
+        #expect(ChineseWorkdayCalendar.workdaysBetween(from: may31, to: jun3) == 1)
+
+        // 空区间 / 逆序区间
+        #expect(ChineseWorkdayCalendar.workdaysBetween(from: jun3, to: jun3) == 0)
+        #expect(ChineseWorkdayCalendar.workdaysBetween(from: jun3, to: may31) == 0)
+    }
+
+    @Test func calendar_cacheReturnsSameValueAcrossCalls() {
+        // 连续调用必须走缓存且结果稳定(缓存的回归保护)
+        let first = ChineseWorkdayCalendar.monthWorkdays(year: 2025, month: 10)
+        let second = ChineseWorkdayCalendar.monthWorkdays(year: 2025, month: 10)
+        #expect(first == second)
+        #expect(first == 18)  // 2025-10 国庆+中秋合并
+    }
+
     // MARK: - 格式化
 
     @Test func formatCNY_basic() {

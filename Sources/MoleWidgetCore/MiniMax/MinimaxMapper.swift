@@ -26,8 +26,7 @@ public enum MinimaxMapper {
         return MinimaxSnapshot(
             fiveHour: fiveHour,
             weekly: weekly,
-            fetchedAt: Date(),
-            error: nil
+            fetchedAt: Date()
         )
     }
 

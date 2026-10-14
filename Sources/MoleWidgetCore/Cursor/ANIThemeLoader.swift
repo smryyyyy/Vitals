@@ -94,6 +94,8 @@ public enum ANIThemeLoader {
         case badCursorData
         /// An image payload was recognised but could not be decoded.
         case imageDecodeFailed
+        /// A frame declares a bitmap larger than `maximumFrameDimension`.
+        case imageTooLarge
 
         public var errorDescription: String? {
             switch self {
@@ -109,6 +111,8 @@ public enum ANIThemeLoader {
                 return "Malformed cursor (.cur/.ico) data inside an 'icon' chunk."
             case .imageDecodeFailed:
                 return "Failed to decode cursor image data."
+            case .imageTooLarge:
+                return "Cursor frame is larger than the \(maximumFrameDimension)x\(maximumFrameDimension) pixel limit."
             }
         }
     }
@@ -120,6 +124,21 @@ public enum ANIThemeLoader {
     /// Longer animations are resampled down to this count rather than rejected:
     /// a slightly choppier cursor is much better than no cursor at all.
     public static let maximumFrameCount = 24
+
+    /// Maximum width or height, in pixels, of a single decoded frame.
+    ///
+    /// The CUR/ICO directory stores each dimension in a single byte, so the
+    /// format itself tops out at 256 — but the **DIB header** inside the payload
+    /// is a full 32-bit field, and the decoder allocates `width × height × 4`
+    /// bytes from it. A corrupt or hostile file claiming 65535 × 65535 would
+    /// therefore ask for ~17 GB on whatever thread parsed it, which is the
+    /// main actor during `apply()`.
+    ///
+    /// 512 is deliberately generous: it is twice the format's own maximum, so
+    /// every legitimate cursor passes and only genuinely broken headers are
+    /// rejected. Rejecting a frame is safe — the rest of the theme still
+    /// registers, and an oversized frame is never drawn anyway.
+    public static let maximumFrameDimension = 512
 
     /// Jiffies per second used by the `rate` chunk (60 Hz).
     private static let jiffiesPerSecond: Double = 60.0
@@ -353,6 +372,13 @@ public enum ANIThemeLoader {
         guard let rep = NSBitmapImageRep(data: data), let cgImage = rep.cgImage else {
             throw LoadError.imageDecodeFailed
         }
+        // A PNG carries its own pixel dimensions inside a compressed stream, so
+        // the DIB header check cannot cover this path — enforce the same
+        // ceiling here or an oversized image gets through unchecked.
+        guard cgImage.width <= maximumFrameDimension,
+              cgImage.height <= maximumFrameDimension else {
+            throw LoadError.imageTooLarge
+        }
         return cgImage
     }
 
@@ -389,6 +415,15 @@ public enum ANIThemeLoader {
         // Doubled height: half of it is colour rows, the rest is the AND mask.
         let pixelRows = abs(Int(heightField)) / 2
         guard pixelRows > 0 else { throw LoadError.imageDecodeFailed }
+
+        // Size ceiling, checked **before** the buffer below is allocated.
+        // `width` and `pixelRows` both come straight out of the file's 32-bit
+        // header fields, and `rgba` would be `width * pixelRows * 4` bytes —
+        // on the main actor, during `apply()`. Rejecting here keeps a corrupt
+        // header from turning into a multi-gigabyte allocation.
+        guard width <= maximumFrameDimension, pixelRows <= maximumFrameDimension else {
+            throw LoadError.imageTooLarge
+        }
 
         // 32bpp BGRA is what Windows cursors ship; anything else would need a
         // palette/index expansion this loader deliberately does not do.

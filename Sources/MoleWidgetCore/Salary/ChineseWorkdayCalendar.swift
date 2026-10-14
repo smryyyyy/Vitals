@@ -143,6 +143,60 @@ public enum ChineseWorkdayCalendar {
         return c
     }()
 
+    // MARK: - 月度工作日缓存
+
+    /// 节假日表是编译期常量,某个自然月的工作日集合也是常量,
+    /// 所以按 (年, 月) 缓存成一张 32 位位图(bit 0 = 1 号,bit n = n+1 号)。
+    ///
+    /// 为什么需要:`isWorkday` 每次都要 `String(format:)` 拼 "yyyy-MM-dd" key,
+    /// 而 `totalEarned` 会逐月调 `workdaysBetween` 逐日判断 —— 入职 10 年就是
+    /// 120 个月 × 每月约 30 次格式化,而且每秒重算一次。改成按月缓存位图后,
+    /// 整月查询一次位运算即可,格式化只发生在每个月的第一次访问。
+    ///
+    /// 用 `NSLock` 而不是 `@MainActor`:虽然现在只有 `SalaryEngine`(主线程)在用,
+    /// 但表是纯数据 + 常量缓存,挪到后台队列时不需要改实现。
+    private static let cacheLock = NSLock()
+    private static var monthMaskCache: [Int: UInt32] = [:]
+
+    /// 月份 key = year * 100 + month(1-based)。
+    private static func monthKey(year: Int, month: Int) -> Int {
+        year * 100 + month
+    }
+
+    /// 该月的工作日位图,首次访问时构建。
+    private static func monthMask(year: Int, month: Int) -> UInt32 {
+        let key = monthKey(year: year, month: month)
+        cacheLock.lock()
+        if let cached = monthMaskCache[key] {
+            cacheLock.unlock()
+            return cached
+        }
+        cacheLock.unlock()
+
+        let mask = buildMonthMask(year: year, month: month)
+
+        cacheLock.lock()
+        monthMaskCache[key] = mask
+        cacheLock.unlock()
+        return mask
+    }
+
+    /// 逐日判定一次,把结果压进位图。只在每个月的第一次访问时执行。
+    private static func buildMonthMask(year: Int, month: Int) -> UInt32 {
+        guard let start = calendar.date(from: DateComponents(year: year, month: month, day: 1)),
+              let end = calendar.date(byAdding: .month, value: 1, to: start) else { return 0 }
+        var mask: UInt32 = 0
+        var d = start
+        var day = 1
+        while d < end {
+            if isWorkday(d) { mask |= (1 << UInt32(day - 1)) }
+            guard let next = calendar.date(byAdding: .day, value: 1, to: d) else { break }
+            d = next
+            day += 1
+        }
+        return mask
+    }
+
     private static func dateKey(_ date: Date) -> String {
         let comps = calendar.dateComponents([.year, .month, .day], from: date)
         return String(format: "%04d-%02d-%02d", comps.year ?? 0, comps.month ?? 0, comps.day ?? 0)
@@ -161,23 +215,59 @@ public enum ChineseWorkdayCalendar {
         return weekday != 1 && weekday != 7
     }
 
-    /// 统计 [from, to) 之间(不含尾)的工作日数
+    /// 统计 [from, to) 之间(不含尾)的工作日数。
+    ///
+    /// 两端先对齐到当天 0 点再按月走位图:调用方传入的 `from` 常常带时分
+    /// (比如入职日期的当天 19:00),旧实现靠「每次 +1 天」把时分原样带着走,
+    /// 对齐到 0 点后结果完全一致,但不用逐日拼 key。
     public static func workdaysBetween(from: Date, to: Date) -> Int {
+        let fromDay = calendar.startOfDay(for: from)
+        let toDay = calendar.startOfDay(for: to)
+        guard fromDay < toDay else { return 0 }
+
         var count = 0
-        var d = from
-        while d < to {
-            if isWorkday(d) { count += 1 }
-            guard let next = calendar.date(byAdding: .day, value: 1, to: d) else { break }
-            d = next
+        var cursor = fromDay
+        while cursor < toDay {
+            let y = calendar.component(.year, from: cursor)
+            let m = calendar.component(.month, from: cursor)
+            let mask = monthMask(year: y, month: m)
+            guard mask != 0 else {
+                guard let next = calendar.date(byAdding: .month, value: 1,
+                                               to: calendar.date(from: calendar.dateComponents([.year, .month], from: cursor)) ?? cursor) else { break }
+                cursor = next
+                continue
+            }
+
+            let monthStart = calendar.date(from: calendar.dateComponents([.year, .month], from: cursor)) ?? cursor
+            let firstDay = calendar.component(.day, from: cursor)              // 起始日(可能是月中)
+            let spanStart = firstDay - 1                                       // 位下标(0-based)
+            let daysInMonth = calendar.range(of: .day, in: .month, for: monthStart)?.count ?? 0
+            // 月末必须从「月初」加一个月:5/31 + 1 month 会被 Foundation 截断成 6/30,
+            // 那会让整月区间全部算错。
+            let monthEnd = calendar.date(byAdding: .month, value: 1, to: monthStart) ?? monthStart
+
+            // 本月覆盖到哪天:
+            // - monthEnd <= toDay:整个月都在区间内(注意 to 恰好是下个月 1 号时也走这里)
+            // - 否则区间在月中结束,末尾当天不含 → 排他上界 = toDay 的日 - 1
+            let spanEndExclusive = monthEnd <= toDay
+                ? daysInMonth
+                : calendar.component(.day, from: toDay) - 1
+            if spanEndExclusive > spanStart {
+                // 取出 [spanStart, spanEndExclusive) 这段位,数 1 的个数(月最多 31 天,不会溢出)
+                let width = spanEndExclusive - spanStart
+                let slice = mask >> UInt32(spanStart)
+                count += (slice & ((1 << UInt32(width)) - 1)).nonzeroBitCount
+            }
+
+            guard monthEnd < toDay else { break }
+            cursor = monthEnd
         }
         return count
     }
 
     /// 某年某月(1-based month)的工作日数
     public static func monthWorkdays(year: Int, month: Int) -> Int {
-        guard let start = calendar.date(from: DateComponents(year: year, month: month, day: 1)),
-              let end = calendar.date(byAdding: .month, value: 1, to: start) else { return 0 }
-        return workdaysBetween(from: start, to: end)
+        monthMask(year: year, month: month).nonzeroBitCount
     }
 
     /// 节假日表是否已过期(now 年份 > lastUpdatedYear)

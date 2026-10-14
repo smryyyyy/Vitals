@@ -1,23 +1,30 @@
 import Foundation
 
 /// Value formatters matching the style of `mo status` output.
+///
+/// Units are decimal (1 k = 1000, 1 M = 1 000 000, 1 G = 1 000 000 000) so the
+/// "MB/s" and "GB" labels are literally true. They used to divide by 1024 while
+/// still calling the result MB/GB, which overstated every rate by 4.9% — and,
+/// worse, disagreed with the disk numbers printed right next to them: a
+/// "500 GB" drive reports its capacity in decimal, so the used/free split
+/// rendered with binary divisors did not add up to the total on the box.
 public enum Fmt {
-    /// 17_179_869_184 → "16.0 GB"
+    /// 17_179_869_184 → "17.2 GB"
     public static func gigabytes(_ bytes: UInt64) -> String {
         gigabytesNumber(bytes) + " GB"
     }
 
-    /// Disk usage in mo style: "164G used · 297G free"
+    /// Disk usage in mo style: "494G used · 297G free"
     public static func usedFreePair(used: UInt64, free: UInt64) -> String {
         "\(gigabytesCompact(used)) 已用 · \(gigabytesCompact(free)) 空闲"
     }
 
-    /// Adaptive compact memory footprint: "1.5G" at or above 1 GiB, "793M"
+    /// Adaptive compact memory footprint: "1.6G" at or above 1 GB, "848M"
     /// below. Avoids showing small processes as a misleading "0.0G".
     public static func memoryCompact(_ bytes: UInt64) -> String {
-        let gib = Double(bytes) / 1_073_741_824.0
-        if gib >= 1 { return String(format: "%.1fG", gib) }
-        return String(format: "%.0fM", Double(bytes) / 1_048_576.0)
+        let gb = Double(bytes) / 1_000_000_000.0
+        if gb >= 1 { return String(format: "%.1fG", gb) }
+        return String(format: "%.0fM", Double(bytes) / 1_000_000.0)
     }
 
     /// 0.119 → "11.9%"
@@ -58,19 +65,19 @@ public enum Fmt {
     }
 
     private static func gigabytesNumber(_ bytes: UInt64) -> String {
-        String(format: "%.1f", Double(bytes) / 1_073_741_824.0)
+        String(format: "%.1f", Double(bytes) / 1_000_000_000.0)
     }
 
-    /// "164G" (≥ 10 GiB — no fractional part), "5.0G" (< 10 GiB)
+    /// "494G" (≥ 10 GB — no fractional part), "5.4G" (< 10 GB)
     private static func gigabytesCompact(_ bytes: UInt64) -> String {
-        let gb = Double(bytes) / 1_073_741_824.0
+        let gb = Double(bytes) / 1_000_000_000.0
         if gb >= 10 { return String(format: "%.0fG", gb) }
         return String(format: "%.1fG", gb)
     }
 
     private static func rateNumber(_ bytesPerSecond: Double) -> String {
-        let mbps = max(0, bytesPerSecond) / 1_048_576.0
-        if mbps >= 99.95 { return String(format: "%.0f", mbps.rounded()) }
-        return String(format: "%.1f", mbps)
+        let mbPerSecond = max(0, bytesPerSecond) / 1_000_000.0
+        if mbPerSecond >= 99.95 { return String(format: "%.0f", mbPerSecond.rounded()) }
+        return String(format: "%.1f", mbPerSecond)
     }
 }

@@ -9,7 +9,9 @@
 
 import AppKit
 import Foundation
+import ImageIO
 import OSLog
+import UniformTypeIdentifiers
 
 nonisolated private enum FinalizationSource: Sendable {
     case image(CaptureImage)
@@ -205,10 +207,14 @@ final class CaptureController {
         }
     }
 
-    /// 01-driven cancellation of the in-flight capture from a system lifecycle
-    /// source (sleep / user-session resign / display-topology change). Unlike
-    /// `stop()` the controller stays usable for the next capture: the active
-    /// session terminates to idle, not to `.stopped`. No-op when idle/stopped.
+    /// Cancellation of the in-flight capture from a system lifecycle source
+    /// (sleep / user-session resign). Unlike `stop()` the controller stays usable
+    /// for the next capture: the active session terminates to idle, not to
+    /// `.stopped`. No-op when idle/stopped.
+    ///
+    /// P2-18:调用方是 `ScreenshotServices` —— 它订阅 `NSWorkspace` 的
+    /// `willSleep` / `screensDidSleep` / `sessionDidResignActive` 后转调本方法。
+    /// 拔屏 / 改分辨率不在这里,由 `CapturePipeline` 的 `topologyChanged` 兜底。
     func cancelActiveSession(reason: CaptureCancellationReason) {
         guard case let .active(session) = state else { return }
         terminate(session, cause: .cancelled(reason))
@@ -520,16 +526,23 @@ final class CaptureController {
 
     /// Vitals 截图模块不写文件,只把 PNG 复制到剪贴板。
     /// 该函数模拟 Mio 的 OutputDeliveryService.deliver(...) 接口,但跳过
-    /// FileOutputService 路径,并把 PNG 编码放在这里(NSBitmapImageRep)。
+    /// FileOutputService 路径。
+    ///
+    /// P2-19 修复:PNG 编码(TIFF + PNG,5K 屏 300-600ms)原来整段跑在主线程,而这条
+    /// ⌘2 直出路径是用户感知最强的一次点击。现在只在后台编码,**主线程只留
+    /// `NSPasteboard` 写入** —— NSPasteboard 不是线程安全的,不要为了省一次 hop
+    /// 去赌它的容忍度。
     @MainActor private static func clipboardOnlyDelivery(
         clipboard: ClipboardOutputService,
         prepared: CaptureImage,
         capturedAt: CaptureTimestamp
     ) async -> DeliveryOutcome {
-        let nsImage = NSImage(cgImage: prepared.cgImage, size: NSSize(width: prepared.size.width, height: prepared.size.height))
-        guard let tiff = nsImage.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiff),
-              let png = bitmap.representation(using: .png, properties: [:]) else {
+        let source = prepared
+        let representations = await Task.detached(priority: .userInitiated) {
+            encodeClipboardRepresentations(source)
+        }.value
+
+        guard let representations else {
             let outcome = DeliveryOutcome(
                 file: .notRequested,
                 clipboard: .failed(.noEncodableRepresentation),
@@ -537,12 +550,42 @@ final class CaptureController {
             )
             return outcome
         }
-        let clipboardOutcome = clipboard.copy(png: png, tiff: tiff)
+        let clipboardOutcome = clipboard.copy(png: representations.png, tiff: representations.tiff)
         return DeliveryOutcome.derive(
             policy: .clipboardOnly,
             file: .notRequested,
             clipboard: clipboardOutcome
         )
+    }
+
+    /// 后台编码用的两种剪贴板表示格式。用 ImageIO(CGImageDestination)而不是
+    /// NSImage/NSBitmapImageRep:前者被明确标注线程安全,后者只保证主线程安全。
+    nonisolated private struct ClipboardRepresentations: Sendable {
+        let png: Data
+        let tiff: Data
+    }
+
+    nonisolated private static func encodeClipboardRepresentations(
+        _ image: CaptureImage
+    ) -> ClipboardRepresentations? {
+        guard
+            let png = encode(image.cgImage, as: .png),
+            let tiff = encode(image.cgImage, as: .tiff)
+        else { return nil }
+        return ClipboardRepresentations(png: png, tiff: tiff)
+    }
+
+    nonisolated private static func encode(_ cgImage: CGImage, as type: UTType) -> Data? {
+        let buffer = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            buffer,
+            type.identifier as CFString,
+            1,
+            nil
+        ) else { return nil }
+        CGImageDestinationAddImage(destination, cgImage, nil)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return buffer as Data
     }
 
     // MARK: - Owned handles and terminal cleanup

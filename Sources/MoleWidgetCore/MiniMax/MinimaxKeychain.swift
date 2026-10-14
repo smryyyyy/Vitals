@@ -31,7 +31,19 @@ public struct MinimaxKeychain {
         }
     }
 
-    public static func load() -> MinimaxCredentials? {
+    /// 读取结果。区分"确实没配过"和"暂时读不了" ——
+    /// 之前所有非 success 状态都返回 nil,屏幕锁定时(`kSecAttrAccessibleWhenUnlocked`)
+    /// 会把已经保存好的 cookie 误报成"未配置",用户白填一遍。
+    public enum LoadResult: Equatable {
+        /// Keychain 里根本没有这条记录
+        case notFound
+        /// 记录存在但当前读不出来(锁屏 / 未解锁 / 权限拒绝 / 数据损坏)
+        case unavailable(OSStatus)
+        /// 读到了
+        case found(MinimaxCredentials)
+    }
+
+    public static func load() -> LoadResult {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -42,10 +54,20 @@ public struct MinimaxKeychain {
 
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess, let data = result as? Data else {
-            return nil
+        switch status {
+        case errSecSuccess:
+            guard let data = result as? Data,
+                  let stored = try? JSONDecoder().decode(Stored.self, from: data) else {
+                // 有记录但内容坏了 —— 归到"读不出来",让用户知道要重新填
+                return .unavailable(errSecDecode)
+            }
+            return .found(stored.credentials)
+        case errSecItemNotFound:
+            return .notFound
+        default:
+            // errSecInteractionNotAllowed(锁屏)、errSecAuthFailed、errSecMissingEntitlement 等
+            return .unavailable(status)
         }
-        return try? JSONDecoder().decode(Stored.self, from: data).credentials
     }
 
     public static func clear() {

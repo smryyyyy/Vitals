@@ -148,6 +148,10 @@ final class MockAICredentialKeychain: AICredentialKeychainProtocol, @unchecked S
 final class BlockingGate: @unchecked Sendable {
     private var continuation: CheckedContinuation<Void, Never>?
 
+    /// 当前是否有请求挂在本 gate 上。竞态测试用它可靠采样「请求已经在飞」,
+    /// 避免 `while !x { sleep(1ms) }` 轮询到还没进 mock 的时刻。
+    var isWaiting: Bool { continuation != nil }
+
     /// mock 入口调用:阻塞直到测试 signal。
     func waitForResume() async {
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
@@ -267,6 +271,68 @@ final class BlockingTranslationAdapter: MiniMaxTranslationClientProtocol, @unche
             apiKey: apiKey,
             gate: gate
         )
+    }
+}
+
+// MARK: - 竞态 Mock(P1-10)
+
+// 竞态复现的关键:第一个请求必须**可被测试挂起**,后面的请求要能立刻返回自己的
+// 结果。否则「A 后到」这个时序根本构造不出来,测试就退化成普通串行测试。
+
+/// 第一次调用挂起等待 `releaseFirstCall()`,之后每次调用立刻返回自己的结果。
+/// `isFirstCallSuspended` 让测试可靠采样「A 已经在飞」这个中间态。
+final class RacingTranslationAdapter: MiniMaxTranslationClientProtocol, @unchecked Sendable {
+    private let firstCallLines: [String]
+    private let laterCallLines: [[String]]
+    private let gate = BlockingGate()
+    private var callCount = 0
+
+    init(firstCallLines: [String], laterCallLines: [[String]]) {
+        self.firstCallLines = firstCallLines
+        self.laterCallLines = laterCallLines
+    }
+
+    var isFirstCallSuspended: Bool { gate.isWaiting }
+
+    func releaseFirstCall() { gate.signal() }
+
+    func translate(
+        lines: [String],
+        targetLanguage: String,
+        apiKey: String
+    ) async throws -> ParsedTranslation {
+        callCount += 1
+        if callCount == 1 {
+            await gate.waitForResume()
+            return ParsedTranslation(lines: firstCallLines)
+        }
+        return ParsedTranslation(lines: laterCallLines[min(callCount - 2, laterCallLines.count - 1)])
+    }
+}
+
+/// 语义同 `RacingTranslationAdapter`,只是作用在 Vision 侧。
+final class RacingVisionAdapter: VisionOCRClientProtocol, @unchecked Sendable {
+    private let firstCallLines: [OCRLine]
+    private let laterCallLines: [[OCRLine]]
+    private let gate = BlockingGate()
+    private var callCount = 0
+
+    init(firstCallLines: [OCRLine], laterCallLines: [[OCRLine]]) {
+        self.firstCallLines = firstCallLines
+        self.laterCallLines = laterCallLines
+    }
+
+    var isFirstCallSuspended: Bool { gate.isWaiting }
+
+    func releaseFirstCall() { gate.signal() }
+
+    func recognizeText(in cgImage: CGImage) async throws -> [OCRLine] {
+        callCount += 1
+        if callCount == 1 {
+            await gate.waitForResume()
+            return firstCallLines
+        }
+        return laterCallLines[min(callCount - 2, laterCallLines.count - 1)]
     }
 }
 
@@ -791,5 +857,97 @@ final class BlockingTranslationAdapter: MiniMaxTranslationClientProtocol, @unche
         #expect(OCRStatus.completed.isIdle == false)
         #expect(OCRStatus.failed(.noAPIKey).isFailed == true)
         #expect(OCRStatus.completed.isFailed == false)
+    }
+
+    // MARK: - Test 15(P1-10):陈旧翻译响应不得覆盖新状态
+
+    /// 翻译竞态回归:发起 A → A 未返回时发起 B → B 先完成 → A 后到。
+    /// 客户端超时窗口 15s,这个窗口里用户点第二次「翻译」是现实操作。
+    /// 修复前 A 的响应会后写 `translatedOverlay` / `status`,把 B 的结果覆盖掉。
+    /// 断言:最终 status 是 B 的 `.translated`,覆盖层是 B 的译文。
+    @MainActor
+    @Test func staleTranslationResponseIsDiscardedWhenNewerRequestExists() async {
+        let line = makeOCRLine(text: "hello")
+        let vision = MockVisionOCRClient(linesToReturn: [line])
+        // A 挂起等 gate(模拟慢响应),B 立即返回自己的译文。
+        let translation = RacingTranslationAdapter(
+            firstCallLines: ["旧译文-A"],
+            laterCallLines: [["新译文-B"]]
+        )
+
+        let credential = MockAICredentialKeychain()
+        credential.storedKey = "test-api-key"
+        let service = Self.makeService(
+            visionClient: vision,
+            translationClient: translation,
+            credential: credential
+        )
+
+        // 先拿到 OCR 结果,让 startTranslation 有内容可翻。
+        await service.startRecognition(canvasData: makeTestPNGData())
+        #expect(service.status == .completed)
+
+        // 发起 A:后台 task 跑,避免阻塞测试函数所在的 MainActor。
+        let firstRequest = Task.detached(priority: .userInitiated) { @MainActor in
+            await service.startTranslation()
+        }
+        // 等 A 真的进到 mock 内部挂起。
+        while !translation.isFirstCallSuspended {
+            try? await Task.sleep(nanoseconds: 1_000_000)  // 1ms
+        }
+        #expect(service.status == .translating)
+
+        // A 还在飞的时候发起 B —— B 不阻塞,立即完成。
+        await service.startTranslation()
+        #expect(service.status == .translated)
+        #expect(service.translatedOverlay?.translatedLines == ["新译文-B"])
+
+        // 现在让 A 的响应后到。身份校验应该让它整段丢弃。
+        translation.releaseFirstCall()
+        await firstRequest.value
+
+        #expect(service.status == .translated)
+        #expect(service.translatedOverlay?.translatedLines == ["新译文-B"])
+    }
+
+    // MARK: - Test 16(P1-10):陈旧 OCR 响应不得覆盖新识别
+
+    /// OCR 侧的同一个竞态:Vision 有 2s 超时,窗口内重试同样会产生「旧响应后到」。
+    /// 修复前旧响应会写 `ocrLines` / `status` / 画布 hash 缓存,三个字段都被污染。
+    @MainActor
+    @Test func staleRecognitionResponseIsDiscardedWhenNewerRequestExists() async {
+        // A 挂起等 gate,B 立即返回自己的识别行。
+        let vision = RacingVisionAdapter(
+            firstCallLines: [makeOCRLine(text: "旧结果-A")],
+            laterCallLines: [[makeOCRLine(text: "新结果-B")]]
+        )
+        let service = Self.makeService(
+            visionClient: vision,
+            translationClient: MockMiniMaxTranslationClient(),
+            credential: MockAICredentialKeychain()
+        )
+
+        let canvas = makeTestPNGData()
+
+        // 发起 A。
+        let firstRequest = Task.detached(priority: .userInitiated) { @MainActor in
+            await service.startRecognition(canvasData: canvas)
+        }
+        while !vision.isFirstCallSuspended {
+            try? await Task.sleep(nanoseconds: 1_000_000)  // 1ms
+        }
+        #expect(service.status == .ocrLoading)
+
+        // A 未返回时发起 B(B 走的是不同画布,避免命中 A 可能写入的 hash 缓存)。
+        await service.startRecognition(canvasData: makeTestPNGData(width: 2, height: 2))
+        #expect(service.status == .completed)
+        #expect(service.ocrLines.map(\.text) == ["新结果-B"])
+
+        // A 后到 —— 必须被丢弃。
+        vision.releaseFirstCall()
+        await firstRequest.value
+
+        #expect(service.ocrLines.map(\.text) == ["新结果-B"])
+        #expect(service.status == .completed)
     }
 }

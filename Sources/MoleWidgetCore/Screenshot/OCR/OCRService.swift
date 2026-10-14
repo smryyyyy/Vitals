@@ -5,6 +5,9 @@
 //  OCR + 翻译的统一状态机。
 //  状态机:idle / ocrLoading / completed / translating / translated / failed
 //  缓存:画布 PNG SHA256 hash,5 分钟内同画布不重发 OCR。
+//  竞态(P1-10):OCR 与翻译各自持有一个 in-flight 身份(UUID),每次发起换新,
+//  await 回来先比对身份,不匹配就整个丢弃 —— 翻译客户端 15s 超时窗口足够用户点两次,
+//  没有身份校验时旧响应会覆盖新状态和覆盖层。
 //
 //  工具栏按钮语义映射:
 //    「提取文字」按钮:
@@ -129,6 +132,20 @@ final class OCRService {
 
     private static let cacheTTLSeconds: TimeInterval = 300 // 5 分钟
 
+    // MARK: - in-flight 身份(P1-10)
+
+    /// 当前进行中的 OCR 请求身份。`startRecognition` / `retryRecognition` /
+    /// `restartRecognition` 共用同一条 Vision 通道,每次发起都换新 UUID。
+    ///
+    /// 为什么需要:Vision 客户端有 2s 超时,但用户在这段时间内点「重试」是可能的
+    /// (工具栏按钮只在 `.ocrLoading` 之外才可点,重试入口和工具栏不是同一个视图)。
+    /// 旧响应后到时若无身份校验,会直接覆盖新请求的 `ocrLines` 和 `status`。
+    private var inFlightRecognition: UUID?
+
+    /// 当前进行中的翻译请求身份。翻译客户端超时窗口 15s(`MiniMaxTranslationClient`),
+    /// 这个窗口足够用户在「翻译」按钮上点两次,旧响应后到会覆盖新的 status / overlay。
+    private var inFlightTranslation: UUID?
+
     init(
         credential: AICredentialKeychainProtocol,
         targetLanguage: String,
@@ -178,6 +195,12 @@ final class OCRService {
         let effectiveCanvasData = translatedCanvasData ?? canvasData
         lastEffectiveCanvasDataForTesting = effectiveCanvasData
         let hash = Self.sha256Hex(of: effectiveCanvasData)
+        // P1-10:换新身份,让之前还在飞的 Vision 响应回来时自我作废。
+        let requestID = UUID()
+        inFlightRecognition = requestID
+        // 一次新的 OCR 也让在飞的翻译作废:旧译文是基于旧 ocrLines 的,识别结果已经
+        // 换新,让翻译响应后到覆盖会显示错位的覆盖层。
+        inFlightTranslation = nil
 
         // 缓存命中:直接从跨实例共享 cache 取回 ocrLines,跳过 Vision 调用。
         if let cachedLines = canvasHashCache.lines(for: hash), !cachedLines.isEmpty {
@@ -195,6 +218,8 @@ final class OCRService {
 
         do {
             let lines = try await visionClient.recognizeText(in: cgImage)
+            // 身份校验:不是当前这次请求就直接丢弃,不写任何字段(状态、结果、缓存)。
+            guard inFlightRecognition == requestID else { return }
             self.ocrLines = lines
             self.canvasHashCache.store(lines: lines, for: hash)
             self.translatedOverlay = nil
@@ -204,8 +229,10 @@ final class OCRService {
                 status = .completed
             }
         } catch let error as OCRError {
+            guard inFlightRecognition == requestID else { return }
             status = .failed(error)
         } catch {
+            guard inFlightRecognition == requestID else { return }
             status = .failed(.visionFailed(error.localizedDescription))
         }
     }
@@ -277,6 +304,10 @@ final class OCRService {
         }
         let originalTexts = ocrLines.map(\.text)
         let target = targetLanguage
+        // P1-10:每次翻译一个身份。15s 超时窗口内用户点第二次「翻译」会换新 UUID,
+        // 第一个请求的响应回来时身份不匹配 → 整个丢弃,不碰 status 和 overlay。
+        let requestID = UUID()
+        inFlightTranslation = requestID
         status = .translating
         do {
             let apiKey = credential.readAPIKey() ?? ""
@@ -285,6 +316,7 @@ final class OCRService {
                 targetLanguage: target,
                 apiKey: apiKey
             )
+            guard inFlightTranslation == requestID else { return }
             self.translatedOverlay = TranslatedOverlay(
                 originalLines: ocrLines,
                 translatedLines: parsed.lines,
@@ -292,8 +324,10 @@ final class OCRService {
             )
             status = .translated
         } catch let error as OCRError {
+            guard inFlightTranslation == requestID else { return }
             status = .failed(error)
         } catch {
+            guard inFlightTranslation == requestID else { return }
             status = .failed(.network(error.localizedDescription))
         }
     }
@@ -303,6 +337,8 @@ final class OCRService {
     /// "按翻译后图 OCR"能力仍保留;下次点"提取文字"继续按已翻译图识别。
     func clearTranslation() {
         translatedOverlay = nil
+        // P1-10:用户主动关掉覆盖层,随后才回来的译文不该再把它画回来。
+        inFlightTranslation = nil
         if !ocrLines.isEmpty {
             status = .completed
         } else {
@@ -319,6 +355,9 @@ final class OCRService {
     /// - 清 `translatedCanvasData`("按翻译后图 OCR"能力也一并丢弃)
     /// - status = .idle
     func resetToIdle() {
+        // P1-10:整体重置时同时作废在飞请求,否则重置后旧响应会复活被清掉的字段。
+        inFlightRecognition = nil
+        inFlightTranslation = nil
         ocrLines = []
         translatedOverlay = nil
         translatedCanvasData = nil
@@ -328,6 +367,8 @@ final class OCRService {
     /// 清除所有 OCR / 翻译状态。包含 `translatedCanvasData` —— 整个会话都放弃时
     /// 缓存的"按翻译后图 OCR"能力也应当丢弃。
     func reset() {
+        inFlightRecognition = nil
+        inFlightTranslation = nil
         status = .idle
         ocrLines = []
         translatedOverlay = nil

@@ -68,8 +68,8 @@ public struct MinimaxSettingsView: View {
                     .foregroundStyle(testIsError ? .red : .green)
             }
 
-            if let snapshot = manager.snapshot, let err = snapshot.error {
-                Text("当前状态: \(err)")
+            if let error = manager.lastError {
+                Text("当前状态: \(error.message)")
                     .font(.caption)
                     .foregroundStyle(.red)
             } else if manager.snapshot != nil {
@@ -112,10 +112,13 @@ public struct MinimaxSettingsView: View {
     }
 
     private func loadFromKeychain() {
-        guard let creds = MinimaxKeychain.load() else { return }
-        token = creds.token
-        session = creds.session
-        groupId = creds.groupId
+        // 只有真的读到才回填。锁屏时 Keychain 返回"读不出来",
+        // 这时候把三个框清空等于让用户以为配置丢了。
+        if case .found(let creds) = MinimaxKeychain.load() {
+            token = creds.token
+            session = creds.session
+            groupId = creds.groupId
+        }
     }
 
     private func save() {
@@ -148,6 +151,10 @@ public struct MinimaxSettingsView: View {
                 _ = try await MinimaxClient(credentials: creds).fetchUsage()
                 testResult = "连接成功"
                 testIsError = false
+            } catch let error as MinimaxError {
+                // 和浮窗共用同一套分类文案,两边说法不会打架
+                testResult = "连接失败: \(error.kind.message)"
+                testIsError = true
             } catch {
                 testResult = "连接失败: \(error.localizedDescription)"
                 testIsError = true

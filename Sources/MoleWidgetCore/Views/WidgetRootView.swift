@@ -149,7 +149,10 @@ public struct WidgetRootView: View {
         case .processes:
             ProcessesSectionView(processes: store.topProcesses).equatable()
         case .minimax:
-            MinimaxSectionView(snapshot: minimaxManager.snapshot).equatable()
+            MinimaxSectionView(
+                snapshot: minimaxManager.snapshot,
+                error: minimaxManager.lastError
+            ).equatable()
         case .salary:
             SalarySectionView(snapshot: salaryManager.snapshot, settings: salaryManager.settings).equatable()
         }

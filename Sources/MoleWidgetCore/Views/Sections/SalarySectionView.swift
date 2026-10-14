@@ -14,23 +14,40 @@ public struct SalarySectionView: View, Equatable {
 
     public var body: some View {
         SectionView(icon: "¥", title: "工资") {
-            switch snapshot.state {
-            case .unconfigured:
-                Text("未配置,点菜单栏 → 工资设置…")
-                    .foregroundStyle(Theme.dim)
-
-            case .dayOff:
-                dayOffBody
-
-            case .beforeWork:
-                beforeWorkBody
-
-            case .working, .onLunch:
-                activeBody
-
-            case .afterWork:
-                doneBody
+            // 节假日表过期时排在 section 顶部:此时日薪是按"周一~五"估的,
+            // 跨年尤其容易让人以为数字算错了。单行 + 截断,只多撑高约一行。
+            VStack(alignment: .leading, spacing: 4) {
+                if snapshot.tableExpired {
+                    Text("⚠ 节假日表已过期,按周一~五估算")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.danger)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .help("内嵌节假日表只覆盖到 \(ChineseWorkdayCalendar.lastUpdatedYear) 年,之后按周一~五估算日薪")
+                }
+                body(for: snapshot.state)
             }
+        }
+    }
+
+    @ViewBuilder
+    private func body(for state: SalaryState) -> some View {
+        switch state {
+        case .unconfigured:
+            Text("未配置,点菜单栏 → 工资设置…")
+                .foregroundStyle(Theme.dim)
+
+        case .dayOff:
+            dayOffBody
+
+        case .beforeWork:
+            beforeWorkBody
+
+        case .working, .onLunch:
+            activeBody
+
+        case .afterWork:
+            doneBody
         }
     }
 

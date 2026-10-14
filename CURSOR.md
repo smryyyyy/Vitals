@@ -48,6 +48,10 @@ macOS 没有公开的光标主题 API。要换系统光标，只能走 CoreGraph
 
 这些符号不在公开 SDK 里。macOS 一次更新就可能改名、改签名或直接删掉，所以全部按「尽力而为」处理：解析不到就把 `isAvailable` 报成 `false`，所有入口降级成空操作，不会崩溃。
 
+符号查找比 `RTLD_DEFAULT` 更严一层：先用 `dlopen` 打开确定的镜像（SkyLight / HIServices）再 `dlsym`，并用 `dladdr` 校验返回地址确实落在那个镜像里。`RTLD_DEFAULT` 会搜索进程里所有已加载镜像，同名但签名不同的符号会被直接 `unsafeBitCast` 成错误的函数指针、在服务端崩溃。校验不过就当作符号不存在处理（记日志 + 整体降级），绝不调用。
+
+实测归属（macOS 26.6.2，`dladdr` 确认）：7 个 `CGS*` 符号在 `SkyLight.framework`，`CoreCursorUnregisterAll` 和 `CoreCursorSet` 在 ApplicationServices 里的 `HIServices.framework`，**不在** SkyLight。以后加符号要把它的归属一起写进 `SymbolImage`。
+
 ### 为什么 Vitals 必须一直运行
 
 `CGSRegisterCursorWithImages` 注册时，光标图案存在**本进程的堆内存**里，窗口服务器只拿一个指针过去用。
@@ -236,9 +240,15 @@ VITALS_CURSOR_LIMIT=3 ./Vitals
 make test FILTER=ANI
 ```
 
-`Tests/MoleWidgetCoreTests/Cursor/ANIThemeLoaderTests.swift` 覆盖了解析层：正常样本、热点坐标、帧数来自 `seq` 表而不是写死的常量、alpha 通道没被兜底规则吃掉、DIB 上下翻转、还有五条错误路径（非 RIFF、非 ACON、截断、无 icon 块、坏光标数据）。
+`Tests/MoleWidgetCoreTests/Cursor/ANIThemeLoaderTests.swift` 覆盖了解析层：正常样本、热点坐标、帧数来自 `seq` 表而不是写死的常量、alpha 通道没被兜底规则吃掉、DIB 上下翻转、五条错误路径（非 RIFF、非 ACON、截断、无 icon 块、坏光标数据），外加尺寸上限：声称 4096×4096 的 DIB 必须在分配缓冲区**之前**被 `.imageTooLarge` 挡住（宽或高单边超限也要挡），以及阈值本身留得住真光标。
 
-这些测试只测解析，不涉及窗口服务器注册——注册那部分没法自动化测试，只能手动验证。
+这些测试只测解析，不涉及窗口服务器注册——注册那部分没法自动化测试，只能手动验证。`CGSCursorBridge` 也**故意没有**测试：一调就真的改掉本机鼠标指针，测试环境里坏了没法自救。
+
+### 尺寸上限（防畸形文件撑爆内存）
+
+解析层对单帧宽高设了 `ANIThemeLoader.maximumFrameDimension = 512`。CUR 格式自身的上限是 256（每个维度只占 1 字节），但 DIB 头里的宽高是完整的 32 位字段，解码器会按 `width × height × 4` 一次性分配。一个声称 4096×4096 的坏文件就是 ~64 MB，而且分配发生在 `apply()` 的主线程上。PNG 分支另有自己的尺寸，同样要查。
+
+`CursorThemeService.makeStrip` 还有第二道：`width × (height × frameCount)` 的总像素上限（1<<20）。单帧限制挡不住「512 宽 × 24 帧」这种组合，那还有 25 MB。当前样本是 32×768 = 24 576 像素，比上限低三个数量级。
 
 ---
 
@@ -249,11 +259,26 @@ make test FILTER=ANI
 **1. 不要把符号解析改回 `static let`。**
 `static let` 的初始化闭包跑在 `dispatch_once` 里，而 `dlsym` 可能重入 libdispatch，进程当场崩在 "trying to lock recursively"（macOS 26.6.2 启动时实测）。`resolvedSymbols()` 故意写成手写的一次性缓存，在 `lock` 保护下查，就是为了绕开 `dispatch_once`。
 
-**2. 拿符号要在拿锁之前。**
-`resolvedSymbols()` 内部会拿 `lock`。所以每个公开入口都是先 `resolvedSymbols()` 再 `lock.lock()`，顺序反了就是自死锁。
+**2. 锁只保护符号缓存，不跨窗口服务器调用。**
+`symbolsLock` 只在 `resolvedSymbols()` 里面用。**不要**把它扩到 `register` / `reload` / `unregisterAll` 的 CGS 调用外面：CGS 调用可能无限期阻塞，主线程拿着锁时，后台调用方会卡死在 `lock()` 上，整个 UI 跟着冻住。窗口服务器调用的串行化靠主线程独占（`requireMainThread`）——本 target 里所有调用方都是 main-actor 隔离的，这是编译期事实，不是约定。
+
+符号解析仍然要在任何锁之前完成：`resolvedSymbols()` 自己要拿 `symbolsLock`。
+
+**2b. 每个符号都要登记它归属的镜像。**
+`resolve(_:in:as:)` 用 `dlopen(具体镜像)` + `dlsym` + `dladdr` 三件套。`dladdr` 校验不过就返回 `nil`，整个 bridge 降级成空操作——这是故意的：宁可主题不生效，也不要拿一个签名不对的函数指针去调窗口服务器。加新符号时在 `SymbolImage` 里写清楚它属于 SkyLight 还是 HIServices。
+
+**2c. `reload()` 的收尾是 `defer`，不是人肉记的。**
+`CGSSetSystemDefinedCursor(conn, 0)` 是唯一能清掉服务端光标缓存的调用，也就是"注册失败后鼠标还能回来"的那一步。它在 `reload` 开头就注册成 `defer`，所以**每一条**退出路径（包括 `connection == 0`、缩放读失败、缩放扰动失败）都会先执行它。新增 early return 不需要补收尾——但也别把 `defer` 删了改成内联调用，内联版本只要漏一个 `return` 就会退化成原来的 bug。`connection == 0` 是唯一的例外，此时没有连接可用，本进程也从未注册过任何东西。
+
+**2d. `unregisterAll()` 会重试 3 次并返回成功与否。**
+它返回 `Bool`，`false` 表示回滚没成功。上层不能假设"调过了就等于还原了"：`CursorThemeService.restoreSystemCursors` 即使收到 `false` 也照样往下跑第 2、3 步（重新实例化 + 刷新），因为失败的 unregister 并不会把服务端卡住，跳过重绘才是真正让指针消失的那一步。
 
 **3. 注册必须在主线程同步做完。**
 `apply()` 绝不能丢进 `Task` 里异步跑。异步上下文拿到的 CGS 连接和窗口服务器绘制用的那个不是同一个，注册会返回成功但永远不生效。这个坑踩过一次。
+
+注意「异步」和「延迟执行」是两回事。睡眠唤醒的重新应用用了 `DispatchQueue.main.asyncAfter(0.25s)`：它换的是**执行时机**，不是执行线程——闭包仍然跑在主线程、仍然用本进程自己的 CGS 连接，所以不违反这条。真正的雷是 `Task` 那种会换执行上下文的写法。别把 `asyncAfter` 改成 `Task`。
+
+延迟 0.25 秒有两个作用：唤醒通知发出时窗口服务器还在恢复中，在通知回调里直接调 CGS 可能长时间等它；而且这一延迟让一串唤醒通知被合并掉一次，不会叠加多次 apply。`apply()` 自己还有 `isApplying` 重入保护，两次 apply 交叠会让一批 `register` 和另一批 `unregisterAll` 互相穿插，留下没注册的槽位——槽位没注册就是画成空白。
 
 **4. 帧拼接的 `* height` 不能省。**
 `originY = (count - 1 - index) * height`。省掉乘号 → 24 帧叠在底部 24 行 → 注册成功但光标几乎不可见。

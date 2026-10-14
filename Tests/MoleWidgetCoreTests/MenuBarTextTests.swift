@@ -74,6 +74,7 @@ import Testing
     }
 
     @Test func disk_isOneStackedMetric() {
+        // `Fmt.rateCompact` is decimal: 2 097 152 B/s is 2.10 MB/s, not "2.0M".
         let values = MenuBarValues(
             diskReadBytesPerSec: 2_097_152,
             diskWriteBytesPerSec: 1_048_576
@@ -81,7 +82,7 @@ import Testing
         let metrics = MenuBarText.metrics(values, enabled: on(.disk))
         #expect(metrics.count == 1)
         #expect(metrics[0].stacked)
-        #expect(metrics[0].label == "读 2.0M")
+        #expect(metrics[0].label == "读 2.1M")
         #expect(metrics[0].value == "写 1.0M")
     }
 
