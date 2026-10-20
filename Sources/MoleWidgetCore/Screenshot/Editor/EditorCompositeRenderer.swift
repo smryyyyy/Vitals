@@ -12,7 +12,12 @@
 //
 //  栅格绘制逐条移植自 `CommandRenderer` 的 CGContext 路径（本就是纯 CoreGraphics）；
 //  pencil/mosaic 从快照的点序列重建 `CGPath`。文字层用 CoreText（`CTFont` + `CTLine`）
-//  实现，基线/翻转语义为 origin = 左边中线、baseline = origin.y + capHeight/2。
+//  实现，锚点/翻转语义与画布侧同源（全部取自 `EditorTextLayout`）：
+//  origin = 文字**字形大写中线**（视觉中心）对应的源图 point、
+//  字形起点 = origin.x + horizontalInset、
+//  baseline = origin.y + capHeightOffset(fontSize:)。
+//  （大写中线是纯字体几何量，无 SwiftUI 行盒取整问题；画布侧用
+//  `firstTextBaseline` 对齐 guide 把基线精确落在同一点，两侧逐点相等。）
 //
 
 import CoreGraphics
@@ -235,7 +240,7 @@ actor EditorCompositeRenderer {
     private static func drawText(_ text: CompositeText, in ctx: CGContext) {
         guard !text.text.isEmpty else { return }
 
-        let font = systemMediumFont(size: text.fontSize)
+        let font = EditorTextLayout.systemMediumFont(size: text.fontSize)
         let attributes: [CFString: Any] = [
             kCTFontAttributeName: font,
             kCTForegroundColorAttributeName: text.color.cgColorValue
@@ -247,30 +252,21 @@ actor EditorCompositeRenderer {
         ) else { return }
         let line = CTLineCreateWithAttributedString(attributed)
 
-        // origin = 左边中线；baseline y 让大写字母视觉中线对齐 origin.y。
-        let baselineY = text.origin.y + CTFontGetCapHeight(font) / 2
+        // origin = 文字**字形大写中线**（视觉中心）；基线 = 大写中线 + capHeight/2
+        // —— 与画布侧同一个定义（EditorTextLayout）。
+        let baselineY = text.origin.y + EditorTextLayout.capHeightOffset(fontSize: text.fontSize)
 
         // 当前 CTM 是 Y-down；局部平移到 baseline 后再翻 Y，让 CoreText 的 Y-up
         // 字形正向渲染。
+        // 水平起点要补上文字框内边距：origin 指的是「带内边距的文字框左边」，
+        // 字形实际起点 = origin.x + horizontalInset（与画布侧一致）。
         ctx.saveGState()
         ctx.textMatrix = .identity
-        ctx.translateBy(x: text.origin.x, y: baselineY)
+        ctx.translateBy(x: text.origin.x + EditorTextLayout.horizontalInset, y: baselineY)
         ctx.scaleBy(x: 1, y: -1)
         ctx.textPosition = .zero
         CTLineDraw(line, ctx)
         ctx.restoreGState()
-    }
-
-    /// medium 权重系统字体(CoreText,无 AppKit)。以系统 UI 字体为基础,套一个
-    /// weight=0.23(≈ `NSFont.Weight.medium`)的 descriptor。
-    private static func systemMediumFont(size: CGFloat) -> CTFont {
-        let base = CTFontCreateUIFontForLanguage(.system, size, nil)
-            ?? CTFontCreateWithName("HelveticaNeue-Medium" as CFString, size, nil)
-        let traits: [CFString: Any] = [kCTFontWeightTrait: 0.23]
-        let descriptor = CTFontDescriptorCreateWithAttributes(
-            [kCTFontTraitsAttribute: traits] as CFDictionary
-        )
-        return CTFontCreateCopyWithAttributes(base, size, nil, descriptor)
     }
 
     // MARK: - Translation overlay (覆盖译文到画布原文字位置)
@@ -347,7 +343,7 @@ actor EditorCompositeRenderer {
             let minSize: CGFloat = paragraphMode ? 9 : 10
             return max(minSize, min(rect.height * 0.6, 20))
         }()
-        let baseFont = systemMediumFont(size: baseFontSize)
+        let baseFont = EditorTextLayout.systemMediumFont(size: baseFontSize)
         let measureAttributes: [CFString: Any] = [kCTFontAttributeName: baseFont]
         let measuredWidth: CGFloat = {
             guard let a = CFAttributedStringCreate(
@@ -367,7 +363,7 @@ actor EditorCompositeRenderer {
         }
         let actualFontSize = baseFontSize * scale
         guard actualFontSize >= 1.0 else { return }
-        let actualFont = systemMediumFont(size: actualFontSize)
+        let actualFont = EditorTextLayout.systemMediumFont(size: actualFontSize)
 
         let textColor = CGColor(red: 0.05, green: 0.05, blue: 0.05, alpha: 1)
         let attributes: [CFString: Any] = [
@@ -402,7 +398,7 @@ actor EditorCompositeRenderer {
         fontSize: CGFloat
     ) -> String {
         guard !text.isEmpty, maxWidth > 0 else { return "" }
-        let font = systemMediumFont(size: fontSize)
+        let font = EditorTextLayout.systemMediumFont(size: fontSize)
         let attributes: [CFString: Any] = [kCTFontAttributeName: font]
 
         func width(of s: String) -> CGFloat {

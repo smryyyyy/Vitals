@@ -187,6 +187,26 @@
 
 ---
 
+## 已修复
+
+以下缺陷在本文档成文之后被定位并修复，保留条目以便追溯。
+
+### F1. 导出图像中的文字与编辑器画布所见错位
+
+- **位置**：`Sources/MoleWidgetCore/Screenshot/Editor/TextAnnotationView.swift`（画布侧）与 `Sources/MoleWidgetCore/Screenshot/Editor/EditorCompositeRenderer.swift`（导出侧）；修复后统一收敛到新增的 `Sources/MoleWidgetCore/Screenshot/Editor/EditorTextLayout.swift`。
+- **现象**：编辑器画布上的文字标注，与最终导出图像中的同一标注位置不一致 —— 导出图里的字整体比画布上**偏上**约 12.6 个源图 point（2x 屏 ≈ 25 图像像素），肉眼明显。矩形/椭圆/箭头/画笔/马赛克均正常 —— 它们共用同一套线性映射，文字是唯一走 SwiftUI 视图排版路径的标注类型。
+- **根因（两层）**：
+  1. **主因**：SwiftUI 的 `alignmentGuide` 在子树含**条件内容**（`if/else`、`switch`）时会**静默失效** —— 不报错、不警告，只是被忽略。原 `TextAnnotationView.content` 正是 `@ViewBuilder` + `if isEditing { … } else { … }`，导致画布侧的垂直锚点一直没有生效：文字基线实际落在 `origin.y + 内边距 + ascent`，比导出侧低十几 pt。实测（`NSHostingView` 离屏渲染，20pt 字号）：条件 content 下基线偏移 **+23pt**，非条件 content 下为 **0**。
+  2. **次因**：两侧对 `origin` 的语义定义不同 —— 画布把 `origin` 当「带 6pt 内边距的文字框左边」（字形起点 = `origin.x + 6`），导出把 `origin` 当「字形左边缘」（直接从 `origin.x` 起笔），横向少补 6pt。
+- **修法**：
+  - `TextAnnotation.origin` 语义改为「**字形大写中线**」（文字的视觉中心）对应的源图 point —— 点击落点即文字中心，最符合直觉。
+  - 新增 `EditorTextLayout` 作为锚点语义、内边距、字体构造、基线偏移的**唯一来源**（`horizontalInset` / `verticalInset` / `systemMediumFont` / `capHeightOffset`）。
+  - 画布侧：把 `content` 从「内部 if/else」改为**泛型参数传入的非条件视图**（`textLayer<C: View>`），编辑态与落笔态各自调用，使 `alignmentGuide(VerticalAlignment.top) { dim in dim[.firstTextBaseline] }` 作用在普通视图上；基线直接取 SwiftUI 排版结果，**不做任何行盒推算**。
+  - 导出侧：基线改用 `EditorTextLayout.capHeightOffset`（= `capHeight / 2`），与画布侧共用同一「大写中线」定义；字形起点补 `horizontalInset`；原本内联在渲染器里的 `systemMediumFont` 一并迁入共享文件。
+- **验证**：`NSHostingView` 离屏渲染实测（4 个字号 × 2 个缩放系数），画布侧与导出侧换算回源图 point 空间后 **|Δ基线| ≤ 0.094pt、|Δ左缘| ≤ 0.044pt**（阈值 0.15pt）；CoreText 与 AppKit 的 ascent/descent/capHeight 逐值一致；编辑态与落笔态基线一致（测得的差异全部来自光标 caret 横跨整个行高）。新增 `Tests/MoleWidgetCoreTests/Screenshot/EditorTextLayoutTests.swift`（8 个用例）锁住常量与公式。
+
+---
+
 ## 已核实为正常
 
 以下部分经审查确认实现正确，记录在此以免后续重复排查。
@@ -197,7 +217,7 @@
 - **全局快捷键无泄漏**：`GlobalShortcutService.stop():197` 会将 paused 条目放回 active 表统一注销，deinit 有 8 条断言兜底（`:511-530`）。
 - **截图多屏并发**：并发上限 3、主屏优先、AppKit frame 与 SCK contentRect 做 0.5 pt 容差校验（`Screenshot/Capture/CapturePipeline.swift:236,282,320`）。
 - **撤销/重做**：双栈实现，commit 时清空 redo 栈（`Screenshot/Editor/EditorState.swift:208-209,266`）。
-- **测试覆盖**：206 个 `@Test`、18 个测试文件，覆盖全部采集器、格式化、工资引擎、快捷键。
+- **测试覆盖**：260 个 `@Test`、22 个测试文件，覆盖全部采集器、格式化、工资引擎、快捷键。
 - **桌面浮窗层级**：选在 Finder 桌面图标窗口之上、普通窗口之下，避开了 Finder 透明全屏窗口吞点击的问题（`MoleWidgetApp.swift:384`，含解释性注释）。
 
 ---

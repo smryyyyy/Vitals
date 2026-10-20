@@ -51,6 +51,7 @@
   - 权限检查:Screen Recording + Accessibility,授权后 Carbon hotkey 自动重注册
 - **编辑器**(6 个标注工具 + 颜色选择器 + 撤销/重做)
   - 矩形 / 椭圆 / 箭头 / 画笔 / 文字 / 马赛克(直线用画笔画,没有独立的线条工具)
+  - 文字标注的落点即文字视觉中心,画布所见与导出图像像素级一致(锚点与字体度量的唯一来源见 `Screenshot/Editor/EditorTextLayout.swift`)
   - 马赛克在 Apple Silicon GPU 上生成(IOBlockStorageDriver 实时编码)
   - 编辑完成点"完成"→ 复制 + 关编辑器 + Dynamic Island 反馈
 - **OCR 识别**(macOS Vision 本地 + 免费 + 离线)
@@ -237,15 +238,15 @@ Vitals/
 │           ├── CGSCursorBridge.swift   # CGS 私有 API 封装 (dlsym + 缩放扰动刷新)
 │           ├── ANIThemeLoader.swift    # Windows .ani 动画光标解析
 │           └── CursorThemeService.swift# 注册/回滚 + 睡眠唤醒重应用
-│       └── Screenshot/                # 截图模块 (本轮新增,46 个文件)
+│       └── Screenshot/                # 截图模块 (48 个文件)
 │           ├── ScreenshotServices.swift       # 顶层协调
 │           ├── ScreenshotTypes.swift
-│           ├── Permission/ (PermissionManager + SystemSettings)
+│           ├── Permission/ (PermissionManager + SystemSettings 等 3 文件)
 │           ├── Hotkey/ (GlobalShortcutService "Vtls" 签名 + ShortcutRecorderControl 等 6 文件)
 │           ├── OutputDelivery/ (ClipboardOutputService 等 2 文件)
 │           ├── Capture/ (CapturePipeline + CaptureSession + 等 6 文件)
 │           ├── Selection/ (WindowHitTester + SelectionPresenter 等 5 文件)
-│           ├── Editor/ (12 文件,含 AIPanel + 8 工具工具栏)
+│           ├── Editor/ (13 文件,含 AIPanel + 8 工具工具栏 + EditorTextLayout 锚点定义)
 │           ├── OCR/ (VisionOCRClient + MiniMaxTranslationClient + OCRService 等 6 文件)
 │           ├── ImageProcessing/ (3 文件)
 │           └── Settings/ (CaptureSettings + ScreenshotSettingsView)
@@ -256,10 +257,11 @@ Vitals/
 ├── Scripts/
 │   └── make-icon.swift                # 图标生成
 ├── Tests/
-│   └── MoleWidgetCoreTests/ (20 文件)
+│   └── MoleWidgetCoreTests/ (22 文件,260 个 @Test)
 ├── Package.swift                       # SwiftPM 入口
 ├── Makefile                            # 打包 .app
 ├── CURSOR.md                           # 自定义光标模块文档
+├── BUGS.md                             # 已知缺陷与修复记录
 └── README.md
 ```
 
