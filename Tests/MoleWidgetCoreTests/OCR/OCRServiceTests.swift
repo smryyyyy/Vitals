@@ -950,4 +950,77 @@ final class RacingVisionAdapter: VisionOCRClientProtocol, @unchecked Sendable {
         #expect(service.ocrLines.map(\.text) == ["新结果-B"])
         #expect(service.status == .completed)
     }
+
+    // MARK: - Test 17:测试连接必须透传真实失败原因
+
+    /// 回归屏障:`testConnection()` 旧实现把所有失败压成 `false`,设置页只能显示
+    /// 「连接失败:请检查 API Key 或网络」。现在必须把真实原因带出来 ——
+    /// 这里用「模型已下线」(MiniMax base_resp 2069)做样本。
+    @MainActor
+    @Test func testConnectionPropagatesSpecificFailureReason() async {
+        let translation = MockMiniMaxTranslationClient()
+        translation.errorToThrow = OCRError.miniMaxAPIError(
+            2069,
+            "The model \"abab6.5s-chat\" is no longer available."
+        )
+        let credential = MockAICredentialKeychain()
+        credential.storedKey = "test-api-key"
+        let service = Self.makeService(
+            visionClient: MockVisionOCRClient(),
+            translationClient: translation,
+            credential: credential
+        )
+
+        let result = await service.testConnection()
+
+        guard case .failure(let error) = result else {
+            Issue.record("期望失败,但测试连接返回了成功")
+            return
+        }
+        #expect(error == .miniMaxAPIError(2069, "The model \"abab6.5s-chat\" is no longer available."))
+        // 真实原因要能落到用户可见的文案上
+        #expect(error.localizedDescription.contains("2069"))
+    }
+
+    /// Keychain 里没有 key 时,失败原因必须是 `.noAPIKey` —— 设置页据此显示
+    /// 「未在 Keychain 中找到 API Key」,而不是笼统的连接失败。
+    @MainActor
+    @Test func testConnectionReportsNoAPIKeyWhenCredentialMissing() async {
+        let translation = MockMiniMaxTranslationClient()
+        let service = Self.makeService(
+            visionClient: MockVisionOCRClient(),
+            translationClient: translation,
+            credential: MockAICredentialKeychain()  // storedKey == nil
+        )
+
+        let result = await service.testConnection()
+
+        guard case .failure(.noAPIKey) = result else {
+            Issue.record("期望 .noAPIKey 失败,实际为 \(result)")
+            return
+        }
+        // 没有 key 时不该发出网络请求
+        #expect(translation.callCount == 0)
+    }
+
+    /// 连接正常时返回 success。
+    @MainActor
+    @Test func testConnectionSucceedsWhenTranslationWorks() async {
+        let translation = MockMiniMaxTranslationClient(translatedLinesToReturn: ["hello"])
+        let credential = MockAICredentialKeychain()
+        credential.storedKey = "test-api-key"
+        let service = Self.makeService(
+            visionClient: MockVisionOCRClient(),
+            translationClient: translation,
+            credential: credential
+        )
+
+        let result = await service.testConnection()
+
+        guard case .success = result else {
+            Issue.record("期望测试连接成功,实际为 \(result)")
+            return
+        }
+        #expect(translation.callCount == 1)
+    }
 }

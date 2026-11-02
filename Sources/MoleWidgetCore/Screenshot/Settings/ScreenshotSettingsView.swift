@@ -19,7 +19,9 @@ public final class ScreenshotSettingsManager {
     let settings: ScreenshotShortcutStore
     var captureSettings: CaptureSettings
     let credential: AICredentialKeychain
-    let onTestConnection: () async -> Bool
+    /// 测试连接。返回 typed 结果(成功 / 具体失败原因),不折叠成 Bool ——
+    /// 让「测试连接」按钮能显示真实错误,而不是一句笼统的「请检查 API Key 或网络」。
+    let onTestConnection: () async -> Result<Void, OCRError>
     /// 权限(Screen Recording + Accessibility):Carbon hotkey 必需。
     /// 设置窗口用它显示状态 + 引导跳转系统设置。
     let permissionManager: PermissionManager
@@ -49,7 +51,7 @@ public final class ScreenshotSettingsManager {
         permissionManager: PermissionManager,
         globalShortcutService: GlobalShortcutService,
         systemSettingsOpener: SystemSettingsOpener,
-        onTestConnection: @escaping () async -> Bool
+        onTestConnection: @escaping () async -> Result<Void, OCRError>
     ) {
         self.settings = settings
         self.captureSettings = captureSettings
@@ -62,21 +64,24 @@ public final class ScreenshotSettingsManager {
 
     /// 「测试连接」改用 Keychain 里实际存在的 key 做测试,而不是 input 框里的字符串。
     /// 避免 Keychain 已有有效 key 但 input 框为空时按钮被禁用的误判。
+    ///
+    /// 失败时显示**真实原因**:401 会显示「API Key 无效或已过期」,MiniMax 返回
+    /// base_resp 2069(模型已下线)时会显示错误码 + 服务端原文。旧实现把一切失败
+    /// 压成同一句「连接失败:请检查 API Key 或网络」,用户无从判断是 key、网络
+    /// 还是模型问题 —— 排查只能靠抓包。
     func test() async {
         connectionStatus = .testing
-        let success = await onTestConnection()
-        if success {
+        switch await onTestConnection() {
+        case .success:
             connectionStatus = .success
-        } else if !managerHasStoredKey() {
-            // 区分「没有配置 key」与「key 配置但网络/翻译失败」,用户能立刻定位问题。
-            connectionStatus = .failure("未在 Keychain 中找到 API Key,请先粘贴并等 1 秒")
-        } else {
-            connectionStatus = .failure("连接失败:请检查 API Key 或网络")
+        case .failure(let error):
+            if error == .noAPIKey {
+                // 区分「没有配置 key」与「key 配置但网络/翻译失败」,用户能立刻定位问题。
+                connectionStatus = .failure("未在 Keychain 中找到 API Key,请先粘贴并等 1 秒")
+            } else {
+                connectionStatus = .failure(error.localizedDescription)
+            }
         }
-    }
-
-    private func managerHasStoredKey() -> Bool {
-        credential.hasValidAPIKey
     }
 }
 

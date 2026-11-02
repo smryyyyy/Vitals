@@ -58,7 +58,7 @@
   - VNRecognizeTextRequest 带 bounding box,2 秒超时 + ResumeOnce
   - 跨实例画布 SHA256 hash 缓存(5 分钟 TTL,同画布不重跑 Vision)
   - 失败可点"重试"按钮(invalidate cache 后重跑)
-- **AI 翻译**(MiniMax chatcompletion\_v2 + 段落覆盖兜底)
+- **AI 翻译**(MiniMax `/v1/chat/completions` + `MiniMax-M3.1-Flash` + 段落覆盖兜底)
   - 用户自配 MiniMax API Key,存 macOS Keychain(服务 ID `com.skyline.vitals.ocr.aikey`)
   - 6 状态机:idle / ocrLoading / completed / translating / translated / failed
   - 4 路径响应解析(JSON 匹配 / JSON 不匹配 / 非 JSON split 匹配 / 非 JSON split 不匹配)

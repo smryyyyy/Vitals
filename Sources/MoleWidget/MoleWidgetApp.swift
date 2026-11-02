@@ -560,7 +560,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             globalShortcutService: screenshotServices.globalShortcutService,
             systemSettingsOpener: screenshotServices.systemSettingsOpener,
             onTestConnection: { [weak self] in
-                guard let self else { return false }
+                guard let self else { return .failure(.noAPIKey) }
                 return await self.screenshotServices.testAPIConnection()
             }
         )

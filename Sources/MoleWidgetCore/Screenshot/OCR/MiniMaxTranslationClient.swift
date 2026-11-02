@@ -3,11 +3,19 @@
 //  Vitals - Screenshot module
 //
 //  MiniMax chat completions API 调用客户端。
-//  - 端点:https://api.minimax.chat/v1/text/chatcompletion_v2
-//  - 请求格式:OpenAI 兼容（messages + model + temperature）
+//  - 端点:https://api.minimax.cn/v1/chat/completions
+//    (官方现行 OpenAI 兼容端点,文档见 platform.minimax.cn/docs/api-reference/text-chat-openai;
+//     旧路径 /v1/text/chatcompletion_v2 仍可达但已非主推)
+//  - 模型:MiniMax-M3.1-Flash(2026-11-02 实测 200)
+//  - 请求格式:OpenAI 兼容(messages + model + max_completion_tokens)
 //  - 响应:同时兼容 choices[].message.content 和 reply 字段
 //  - 批量翻译:一次调用翻译所有原文,系统 prompt 严格约束"绝不合并/拆分行"
 //  - 15s 超时
+//
+//  **业务错误藏在 HTTP 200 里**:MiniMax 用 200 + body 内 base_resp.status_code
+//  承载业务错误(模型下线 = 2069、参数非法 = 1002 ...)。只看 HTTP 状态码会把
+//  "模型已下线"当成成功,再在解析 choices 时炸成 "unknown response shape",
+//  真实原因丢失 —— 本客户端先查 base_resp,再走内容解析。
 //
 //  **行数不匹配兜底**:模型有时不严格遵循 prompt,把多行原文合并成一段。
 //  旧版本在行数不匹配时直接让画布空着没译文覆盖 —— 体验差。
@@ -62,14 +70,23 @@ protocol MiniMaxTranslationClientProtocol: Sendable {
 }
 
 actor MiniMaxTranslationClient: MiniMaxTranslationClientProtocol {
-    /// 基础端点。实测 v1 + v2 都可达;用 v2 是更稳的版本。
-    private static let baseURL = URL(string: "https://api.minimax.chat/v1/text/chatcompletion_v2")!
+    /// 基础端点。官方现行文档:
+    /// https://platform.minimax.cn/docs/api-reference/text-chat-openai
+    /// 用 OpenAI 兼容的 /v1/chat/completions。实测 api.minimax.cn / api.minimaxi.com /
+    /// api.minimax.chat 三个域名都接受同一把 key,但官方文档域名是 api.minimax.cn。
+    private static let baseURL = URL(string: "https://api.minimax.cn/v1/chat/completions")!
 
     /// 15s 超时
     private static let timeoutSeconds: TimeInterval = 15.0
 
-    /// 默认模型。生产用 abab6.5s-chat,未指定 model 时 fallback。
-    private static let defaultModel = "abab6.5s-chat"
+    /// 默认模型。MiniMax-M3.1-Flash —— 2026-11-02 实测 200。
+    ///
+    /// 坑(实测记录,别凭记忆改):
+    /// - `MiniMax-M3.1`(不带后缀)**不存在**,服务端返回 HTTP 400 —— 必须带 `-Flash`。
+    /// - `MiniMax-M3` 存在,但思考内容会混进 content(带 `<think>` 标签),不干净。
+    /// - 旧模型 `abab6.5s-chat` **已下线**,服务端返回 HTTP 200 + base_resp 2069
+    ///   「The model ... is no longer available.」—— 这正是本客户端要查 base_resp 的原因。
+    private static let defaultModel = "MiniMax-M3.1-Flash"
 
     /// Bug-LCM-1:严格约束 prompt,要求模型绝不合并/拆分多行原文,输出严格 JSON 数组。
     /// 实测 6.5s-chat 偶尔会"贴心地"把 2 行原文合并翻译成 1 行译文,导致画布上
@@ -108,8 +125,9 @@ actor MiniMaxTranslationClient: MiniMaxTranslationClientProtocol {
 
         let requestBody: [String: Any] = [
             "model": Self.defaultModel,
-            "temperature": 0.3,
-            "max_tokens": 4096,
+            // `max_tokens` 已被官方标记弃用,新端点用 `max_completion_tokens`。
+            "max_completion_tokens": 4096,
+            // 不传 temperature:MiniMax-M3.1-Flash 的 temperature 固定为 1,传了不生效。
             "messages": [
                 ["role": "system", "content": systemPrompt],
                 ["role": "user", "content": userPrompt],
@@ -149,44 +167,85 @@ actor MiniMaxTranslationClient: MiniMaxTranslationClientProtocol {
             throw OCRError.translateFailed(http.statusCode, bodyText.prefix(200).description)
         }
 
-        // 解析响应:同时兼容 OpenAI 格式和 MiniMax v1 原生 reply 字段。
-        // Bug-LCM-1 修复:行数不匹配不再 throw,改用 mergedParagraph 兜底。
-        let translatedText = try Self.extractContent(from: data)
-        return Self.parseTranslatedTexts(translatedText, expectedCount: lines.count)
-    }
-
-    /// 提取响应文本 content。优先 OpenAI 格式,fallback 到 MiniMax 原生 reply 字段。
-    private static func extractContent(from data: Data) throws -> String {
+        // 解析响应。顺序很重要:先查业务错误,再提内容。
+        //
+        // MiniMax 用 HTTP 200 + body 内 base_resp.status_code 承载业务错误
+        // (模型下线 = 2069、参数非法 = 1002)。若直接去解析 choices,会炸成
+        // 「unknown response shape」,真实原因丢失 —— 这里先把它变成可读的 typed error。
         let json: Any
         do {
             json = try JSONSerialization.jsonObject(with: data)
         } catch {
             throw OCRError.responseParseFailed("JSON parse failed")
         }
+        if let apiError = Self.businessError(in: json) {
+            throw apiError
+        }
 
+        // 同时兼容 OpenAI 格式和 MiniMax v1 原生 reply 字段。
+        // Bug-LCM-1 修复:行数不匹配不再 throw,改用 mergedParagraph 兜底。
+        let translatedText = try Self.extractContent(from: json)
+        return Self.parseTranslatedTexts(translatedText, expectedCount: lines.count)
+    }
+
+    /// 识别 body 内的业务错误(base_resp.status_code != 0)。
+    ///
+    /// 返回非 nil 表示服务端回了业务错误,调用方应直接抛出,不要继续解析 choices。
+    /// 暴露为 internal static:单元测试直接断言,不依赖 HTTP。
+    static func businessError(in json: Any) -> OCRError? {
+        guard let dict = json as? [String: Any],
+              let baseResp = dict["base_resp"] as? [String: Any],
+              let code = baseResp["status_code"] as? Int,
+              code != 0 else {
+            return nil
+        }
+        let msg = (baseResp["status_msg"] as? String) ?? "unknown error"
+        return .miniMaxAPIError(code, msg)
+    }
+
+    /// 提取响应文本 content。优先 OpenAI 格式,fallback 到 MiniMax 原生 reply 字段。
+    ///
+    /// 入参是**已解析的 JSON 对象** —— 解析只做一次,业务错误检查与内容提取共用同一份,
+    /// 避免「先解析一遍查错误,再解析一遍提内容」的双重开销。
+    private static func extractContent(from json: Any) throws -> String {
         // OpenAI 格式:choices[0].message.content
         if let dict = json as? [String: Any],
            let choices = dict["choices"] as? [[String: Any]],
            let first = choices.first,
            let message = first["message"] as? [String: Any],
            let content = message["content"] as? String {
-            return content
+            return strippingThinkingTags(content)
         }
 
         // MiniMax 原生:reply 字段
         if let dict = json as? [String: Any],
            let reply = dict["reply"] as? String {
-            return reply
+            return strippingThinkingTags(reply)
         }
 
         // MiniMax v1 嵌套格式:data.reply
         if let dict = json as? [String: Any],
            let inner = dict["data"] as? [String: Any],
            let reply = inner["reply"] as? String {
-            return reply
+            return strippingThinkingTags(reply)
         }
 
         throw OCRError.responseParseFailed("unknown response shape")
+    }
+
+    /// 剥离 `<think>...</think>` 思考块。
+    ///
+    /// MiniMax-M3 系列的思考内容会混进 content(实测 `MiniMax-M3` 的 content 里
+    /// 带 think 标签),`MiniMax-M3.1-Flash` 走 reasoning_content 字段但仍留一层防护 ——
+    /// 思考标签混进译文会直接渲染到画布上。
+    private static func strippingThinkingTags(_ text: String) -> String {
+        guard text.contains("<think>") else { return text }
+        var result = text
+        while let open = result.range(of: "<think>"),
+              let close = result.range(of: "</think>", range: open.upperBound..<result.endIndex) {
+            result.replaceSubrange(open.lowerBound..<close.upperBound, with: "")
+        }
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// 解析模型返回的文本为 `ParsedTranslation`。4 种解析路径:

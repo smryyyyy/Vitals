@@ -149,6 +149,40 @@ import Testing
         #expect(prompt.contains("简体中文"))
     }
 
+    // MARK: - 业务错误识别(base_resp)
+
+    /// 回归屏障:MiniMax 把业务错误塞在 HTTP 200 的 body 里
+    /// (`base_resp.status_code != 0`)。本例是真实抓到的「模型已下线」响应:
+    /// HTTP 200 + status_code 2069 + status_msg 明说模型没了。
+    ///
+    /// 旧实现只看 HTTP 状态码 → 走成功分支 → 解析 choices(null)失败 →
+    /// 抛「unknown response shape」→ 设置页显示「请检查 API Key 或网络」,
+    /// 真实原因完全丢失。现在必须把它识别成 `miniMaxAPIError`。
+    @Test func businessErrorDetectsRetiredModelInsideSuccessfulHTTPCode() {
+        let raw = #"{"choices":null,"usage":null,"base_resp":{"status_code":2069,"status_msg":"The model \"abab6.5s-chat\" is no longer available."}}"#
+        let json = try? JSONSerialization.jsonObject(with: Data(raw.utf8))
+
+        let error = MiniMaxTranslationClient.businessError(in: json ?? [:])
+
+        #expect(error == .miniMaxAPIError(2069, "The model \"abab6.5s-chat\" is no longer available."))
+    }
+
+    /// 正常响应里 base_resp.status_code == 0 —— 不能误判成业务错误。
+    @Test func businessErrorReturnsNilForNormalResponse() {
+        let raw = #"{"choices":[{"message":{"content":"你好"}}],"base_resp":{"status_code":0,"status_msg":""}}"#
+        let json = try? JSONSerialization.jsonObject(with: Data(raw.utf8))
+
+        #expect(MiniMaxTranslationClient.businessError(in: json ?? [:]) == nil)
+    }
+
+    /// 没有 base_resp 字段的响应(兼容旧格式)也不能误判成业务错误。
+    @Test func businessErrorReturnsNilWhenBaseRespMissing() {
+        let raw = #"{"reply":"你好"}"#
+        let json = try? JSONSerialization.jsonObject(with: Data(raw.utf8))
+
+        #expect(MiniMaxTranslationClient.businessError(in: json ?? [:]) == nil)
+    }
+
     // MARK: - TranslatedOverlay 双模式分流
 
     /// TranslatedOverlay.isLineMode:mergedParagraph == nil 且行数匹配 → true。

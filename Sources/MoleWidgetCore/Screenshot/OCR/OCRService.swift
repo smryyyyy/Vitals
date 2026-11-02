@@ -400,11 +400,16 @@ final class OCRService {
         defaults.set(targetLanguage, forKey: WidgetSettings.ocrTargetLanguageKey)
     }
 
-    /// 测试 API Key 连接。任何失败(网络断开 / 超时 / 401 / 403 / 429 / 5xx /
-    /// JSON 解析失败)都返回 `false`,避免误报「成功」。
-    func testConnection() async -> Bool {
-        guard let apiKey = credential.readAPIKey(), !apiKey.isEmpty else {
-            return false
+    /// 测试 API Key 连接。返回**具体失败原因**,不再折叠成 Bool。
+    ///
+    /// 旧实现把所有失败(网络断开 / 超时 / 401 / 403 / 429 / 5xx / JSON 解析失败 /
+    /// 模型已下线)统一压成 `false`,设置页只能渲染出一句
+    /// 「连接失败:请检查 API Key 或网络」—— 真实原因(比如 MiniMax 返回
+    /// base_resp 2069「模型已下线」)在 UI 上完全不可见,排查只能靠抓包。
+    func testConnection() async -> Result<Void, OCRError> {
+        guard let apiKey = credential.readAPIKey(),
+              !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return .failure(.noAPIKey)
         }
         do {
             _ = try await translationClient.translate(
@@ -412,21 +417,12 @@ final class OCRService {
                 targetLanguage: targetLanguage,
                 apiKey: apiKey
             )
-            return true
-        } catch OCRError.unauthorized, OCRError.noAPIKey {
-            return false
-        } catch OCRError.timeout {
-            return false
-        } catch OCRError.rateLimit {
-            return false
-        } catch OCRError.translateFailed {
-            return false
-        } catch OCRError.responseParseFailed {
-            return false
-        } catch OCRError.network {
-            return false
+            return .success(())
+        } catch let error as OCRError {
+            return .failure(error)
         } catch {
-            return false
+            // 非 typed error(理论上不该出现)归到网络类,保留原始文案。
+            return .failure(.network(error.localizedDescription))
         }
     }
 

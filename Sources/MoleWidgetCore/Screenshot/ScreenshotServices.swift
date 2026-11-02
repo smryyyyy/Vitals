@@ -327,7 +327,8 @@ public final class ScreenshotServices {
 
     /// 测试当前 API Key 是否有效。结果反馈到 ScreenshotSettingsManager。
     /// 从 UserDefaults 读目标语言,保证「测试连接」按钮使用的语言与编辑器内一致。
-    public func testAPIConnection() async -> Bool {
+    /// 返回具体失败原因(typed error),让设置页能显示真实错误而不是笼统提示。
+    public func testAPIConnection() async -> Result<Void, OCRError> {
         let targetLanguage = WidgetSettings.ocrTargetLanguage(in: defaults)
         let testService = makeOCRService(targetLanguage: targetLanguage)
         return await testService.testConnection()
