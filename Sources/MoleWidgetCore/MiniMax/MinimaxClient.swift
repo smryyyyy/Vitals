@@ -1,6 +1,6 @@
 import Foundation
 
-/// Thin URLSession wrapper around the MiniMax usage API. The three cookies
+/// Thin URLSession wrapper around the MiniMax usage API. The two cookies
 /// and `x-group-id` header are the entire auth surface — no bearer token,
 /// no API key, no signature. All headers required by the backend are set
 /// explicitly so we don't inherit the system UA.
@@ -26,11 +26,11 @@ public struct MinimaxClient {
         request.timeoutInterval = 10
         request.cachePolicy = .reloadIgnoringLocalCacheData
 
-        // Cookies — only the three we need; the rest are noise the backend
-        // would gladly ignore but they pad the request for no reason.
+        // Cookies — 只有这两个了。HERTZ-SESSION 在 2026-11-03 实测确认可省:
+        // 带与不带都返回 200,数据一致。它原本是三件套里最短命的(约 30 天),
+        // 去掉后 `_token` 过期由 `MinimaxTokenRenewer` 自动续期兜底。
         let cookies = [
             "_token": credentials.token,
-            "HERTZ-SESSION": credentials.session,
             "minimax_group_id_v2": credentials.groupId,
         ].map { "\($0.key)=\($0.value)" }.joined(separator: "; ")
 

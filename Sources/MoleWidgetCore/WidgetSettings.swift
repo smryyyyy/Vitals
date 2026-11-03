@@ -112,6 +112,17 @@ public enum WidgetSettings {
     public static let defaultMinimaxRefreshInterval: Double = 5
     public static let minimaxRefreshIntervalOptions: [Double] = [1, 5, 15, 30, 60]
 
+    // MARK: - MiniMax 自动续期
+
+    /// 最近一次续期成功的时间(Unix 秒)。持久化是为了让「今天续过没」
+    /// 在应用重启后依然成立 —— 否则每次重启都会重新续一次。
+    public static let minimaxLastRenewalKey = "minimaxLastRenewal"
+
+    /// 每日自动续期的固定时刻(本地时间的小时)。默认凌晨 4 点:
+    /// 夜里跑不跟用户的使用时段撞上,也避开 0 点前后系统休眠导致的定时抖动。
+    /// 错过这个点也不要紧 —— 下一次拉取会补上,不会漏。
+    public static let minimaxDailyRenewalHour = 4
+
     // MARK: - Desktop visibility
 
     /// Whether the widget window is shown on the desktop. Hiding it keeps the

@@ -43,21 +43,25 @@ public struct MinimaxSnapshot: Equatable, Codable {
     public var isEmpty: Bool { fiveHour == nil && weekly == nil }
 }
 
-/// Authentication trio required by the MiniMax backend. None of the values
+/// Authentication pair required by the MiniMax backend. None of the values
 /// are persisted in plain-text — see `MinimaxKeychain`.
+///
+/// 为什么只有两个:2026-11-03 实测 `www.minimaxi.com/backend/account/token_plan/
+/// remains_percent` **不带 HERTZ-SESSION 也返回 200**,数据与带 cookie 时一致。
+/// HERTZ-SESSION 原本是三件套里最短命的那个(约 30 天),去掉它等于把
+/// 「三天两头要重新抓 cookie」变成「不用管」—— 配合 `MinimaxTokenRenewer`
+/// 的自动续期,`_token` 过期前会自动换新。
 public struct MinimaxCredentials: Equatable, Codable {
     public let token: String        // _token JWT
-    public let session: String      // HERTZ-SESSION
     public let groupId: String      // minimax_group_id_v2 (== x-group-id)
 
-    public init(token: String, session: String, groupId: String) {
+    public init(token: String, groupId: String) {
         self.token = token
-        self.session = session
         self.groupId = groupId
     }
 
     public var isValid: Bool {
-        !token.isEmpty && !session.isEmpty && !groupId.isEmpty
+        !token.isEmpty && !groupId.isEmpty
     }
 }
 

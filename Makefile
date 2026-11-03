@@ -5,7 +5,18 @@ FRAMEWORKS = /Library/Developer/CommandLineTools/Library/Developer/Frameworks
 TESTFLAGS = -Xswiftc -F -Xswiftc $(FRAMEWORKS)
 
 APP_NAME = Vitals
-DIST = dist/$(APP_NAME).app
+DIST_DIR = dist
+DIST = $(DIST_DIR)/$(APP_NAME).app
+
+# 组装暂存目录:必须在 /tmp(/private/tmp),**不能**放项目目录里。
+#
+# 项目目录在 iCloud/FileProvider 管理下,新建的目录会被后台异步打上
+# `com.apple.fileprovider.fpfs#P` + `com.apple.FinderInfo` —— codesign 直接拒签
+# (`resource fork, Finder information, or similar detritus not allowed`)。
+# 间歇性失败的原因就在「异步」二字:清理跑完之后 fileprovider 才动手把属性
+# 打回来,于是同一个 Makefile 时好时坏。/tmp 不受 FileProvider 管理,干净。
+STAGE_ROOT = /tmp/$(APP_NAME)-stage
+STAGE = $(STAGE_ROOT)/$(APP_NAME).app
 
 # Cursor themes live outside the bundle on purpose.
 #
@@ -44,15 +55,21 @@ app:
 	# on whether the attribute happened to propagate.
 	xattr -cr .build/release
 	xattr -cr Resources
-	rm -rf "$(DIST)"
-	mkdir -p "$(DIST)/Contents/MacOS"
-	cp .build/release/MoleWidget "$(DIST)/Contents/MacOS/MoleWidget"
-	cp Resources/Info.plist "$(DIST)/Contents/Info.plist"
-	mkdir -p "$(DIST)/Contents/Resources"
-	cp Resources/AppIcon.icns "$(DIST)/Contents/Resources/AppIcon.icns"
-	install_name_tool -add_rpath "@executable_path/../Frameworks" "$(DIST)/Contents/MacOS/MoleWidget"
-	$(MAKE) scrub-xattrs "$(DIST)"
-	codesign --force --sign - "$(DIST)"
+	# 组装在 /tmp 做 —— 见上面 STAGE 的注释:项目目录里组装会被 FileProvider
+	# 异步打上 FinderInfo/fpfs#P,codesign 间歇性拒签。
+	rm -rf "$(STAGE_ROOT)" "$(DIST)"
+	mkdir -p "$(STAGE)/Contents/MacOS"
+	cp .build/release/MoleWidget "$(STAGE)/Contents/MacOS/MoleWidget"
+	cp Resources/Info.plist "$(STAGE)/Contents/Info.plist"
+	mkdir -p "$(STAGE)/Contents/Resources"
+	cp Resources/AppIcon.icns "$(STAGE)/Contents/Resources/AppIcon.icns"
+	install_name_tool -add_rpath "@executable_path/../Frameworks" "$(STAGE)/Contents/MacOS/MoleWidget"
+	$(MAKE) scrub-xattrs TARGETS="$(STAGE)"
+	codesign --force --sign - "$(STAGE)"
+	# `cp -R` 不会创建缺失的父目录:dist/ 是 gitignore 的,全新克隆时根本不存在,
+	# 少了这一行 `make app` 会直接失败(No such file or directory)。
+	mkdir -p "$(DIST_DIR)"
+	cp -R "$(STAGE)" "$(DIST)"
 	$(MAKE) cursors
 	@echo "Done: $(DIST)"
 
@@ -64,14 +81,21 @@ app:
 # not `com.apple.provenance`, which codesign tolerates — abort the signing step.
 # They also reappear on whatever `cp` creates, so they must be stripped from the
 # source *and* from the assembled bundle, and `xattr -cr` cannot remove them.
+#
+# `find -depth`(后序遍历)是关键:默认的前序遍历会在改写目录元数据后让 find 的
+# fd 指向已被替换的 inode,**顶层目录**的 FinderInfo 会漏删,随后 codesign 报
+# `resource fork, Finder information, or similar detritus not allowed`
+# —— 而这个错不指认具体文件,极难定位。后序遍历让每个目录都在其子项处理完之后
+# 才被改写,漏删就不会发生。
 scrub-xattrs:
 	@for t in $(TARGETS) "$(DIST)"; do \
 		[ -e "$$t" ] || continue; \
-		find "$$t" -exec xattr -d com.apple.FinderInfo {} \; 2>/dev/null || true; \
-		find "$$t" -exec xattr -d 'com.apple.fileprovider.fpfs#P' {} \; 2>/dev/null || true; \
-		find "$$t" -exec xattr -cr {} \; 2>/dev/null || true; \
-		xattr -d com.apple.FinderInfo "$$t" 2>/dev/null || true; \
-		xattr -d 'com.apple.fileprovider.fpfs#P' "$$t" 2>/dev/null || true; \
+		find "$$t" -depth 2>/dev/null | while read -r p; do \
+			for a in com.apple.FinderInfo com.apple.ResourceFork com.apple.quarantine; do \
+				xattr -d "$$a" "$$p" 2>/dev/null || true; \
+			done; \
+			xattr -d 'com.apple.fileprovider.fpfs#P' "$$p" 2>/dev/null || true; \
+		done; \
 	done
 	@true
 

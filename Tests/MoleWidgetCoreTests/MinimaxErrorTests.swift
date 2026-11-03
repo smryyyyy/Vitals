@@ -130,21 +130,33 @@ import Testing
 
     // MARK: - P1-12 Keychain 三态
 
+    /// 测试专用的 Keychain 存取器 —— **独立 service**,不碰用户真实凭据。
+    ///
+    /// 2026-11-03 实测踩坑:原来这里直接用 `MinimaxKeychain`(生产 service)。
+    /// 测试进程删不掉 /Applications 里 Vitals.app 创建的记录(SecItemDelete
+    /// 跨应用静默失败),于是「clear 再断言 .notFound」实际没清掉,而 save() 的
+    /// SecItemUpdate 把**用户真实凭据覆盖成了假数据**,最后 clear() 再删掉 ——
+    /// 跑一次测试就毁一次用户配置。改成独立 service 后彻底隔离。
+    private static let testStore = MinimaxKeychainStore(
+        service: "com.somry.vitals.minimax.tests",
+        account: "credentials"
+    )
+
     @Test func keychain_load_unconfiguredItem_reportsNotFound() {
         // 清掉之后必须报"没配过",而不是笼统的 nil
-        MinimaxKeychain.clear()
-        #expect(MinimaxKeychain.load() == .notFound)
+        Self.testStore.clear()
+        #expect(Self.testStore.load() == .notFound)
     }
 
     @Test func keychain_load_roundtripFound() {
-        let creds = MinimaxCredentials(token: "t", session: "s", groupId: "g")
+        let creds = MinimaxCredentials(token: "t", groupId: "g")
         do {
-            try MinimaxKeychain.save(creds)
+            try Self.testStore.save(creds)
         } catch {
             // CI 环境下 Keychain 可能不可写,跳过而不是让测试红
             return
         }
-        defer { MinimaxKeychain.clear() }
-        #expect(MinimaxKeychain.load() == .found(creds))
+        defer { Self.testStore.clear() }
+        #expect(Self.testStore.load() == .found(creds))
     }
 }

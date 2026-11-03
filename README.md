@@ -38,7 +38,7 @@
 
 - 5h 限额 + 周限额实时查询
 - 自带"Xh Ym 后重置"倒计时
-- macOS Keychain 安全存 cookie(3 个:\_token / HERTZ-SESSION / minimax\_group\_id\_v2)
+- macOS Keychain 安全存 cookie(2 个:\_token / minimax\_group\_id\_v2),`_token` 支持自动续期
 - 1/5/15/30/60 分钟可配刷新频率
 - **菜单栏指标**:可选 "5h" / "week" / "工资" 列显示(参照 CPU/MEM 模式)
 
@@ -131,14 +131,17 @@ make install
 1. 启动 Vitals 后，菜单栏图标 → **MiniMax 设置…**
 2. 在 Chrome 登录 [platform.minimaxi.com](https://platform.minimaxi.com)
 3. F12 → Network → 找 `www.minimaxi.com` 开头的请求 → 右键 → **Copy as cURL (bash)**
-4. 从 cURL 里的 `-H 'Cookie: ...'` 提取 3 个值：
+4. 从 cURL 里的 `-H 'Cookie: ...'` 提取 2 个值：
    - `_token` (JWT 格式 `eyJ...`)
-   - `HERTZ-SESSION`
    - `minimax_group_id_v2`
 5. 填到 Vitals 设置面板 → **测试连接** → **保存**
 6. 桌面浮窗会出现 **MiniMax section**（5h + 周 + 倒计时）
 
-**Cookie 过期处理**：HERTZ-SESSION 约 30 天过期，过期后桌面浮窗在用量数字下方加一行红字"认证已过期，请重新登录并更新 cookie"。重新登录抓 cookie 再填即可。拉取失败（断网 / 超时 / 服务器错误）时浮窗**保留上一次成功的用量数据**，只多一行错误提示，不会因为几秒网络抖动把数字清空。屏幕锁定读不到 Keychain 时会提示"钥匙串已锁定，解锁后重试"，不会误报成"未配置"。
+**只存两个值**：`HERTZ-SESSION` 不用填。实测用量接口 `www.minimaxi.com/backend/account/token_plan/remains_percent` 带与不带它都返回 200，数据一致 —— 而它恰恰是三件套里最短命的（约 30 天），去掉它才谈得上"配一次就不用管"。
+
+**Token 自动续期**：`_token` 是 JWT，有效期约 40 天。Vitals **每天凌晨 4 点自动续期一次**（换新 token 并写回 Keychain），用户不用再手动抓 cookie。错过这个点也不会漏 —— 下一次拉取会补上。续期失败会静默降级继续用旧 token，不会中断用量拉取，也不会丢配置。设置面板里可以看到 token 剩余有效期、下次续期时间，并有一个「立即续期」按钮随时手动触发（用来确认自动续期链路是通的）。
+
+**认证过期处理**：真过期时桌面浮窗在用量数字下方加一行红字"认证已过期，请重新登录并更新 cookie"。重新登录抓 cookie 再填即可。拉取失败（断网 / 超时 / 服务器错误）时浮窗**保留上一次成功的用量数据**，只多一行错误提示，不会因为几秒网络抖动把数字清空。屏幕锁定读不到 Keychain 时会提示"钥匙串已锁定，解锁后重试"，不会误报成"未配置"。
 
 ---
 
@@ -292,7 +295,7 @@ Vitals/
 
 ### MiniMax 显示"认证失败"
 
-Cookie 过期了（HERTZ-SESSION 约 30 天，_token 约 39 天）。重新登录 platform.minimaxi.com 抓新 cookie，填到 Vitals → MiniMax 设置。
+`_token` 过期了（约 40 天）。正常情况下 Vitals 每天凌晨 4 点会自动续期一次，不用管；看到这个提示说明自动续期没生效（比如期间断网、公司改了续期接口），重新登录 platform.minimaxi.com 抓新 cookie 填到 Vitals → MiniMax 设置即可。
 
 ### 桌面浮窗不显示
 
