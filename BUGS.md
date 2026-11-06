@@ -28,13 +28,6 @@
 - **触发条件**：用户在设置页修改 1/5/15/30/60 分钟任一档位后返回。
 - **修法方向**：改为读取 UserDefaults 的计算属性，或在设置变更时同步更新静态存储。该文件 `:23-24` 的注释描述与当前实现不一致，需一并修订。
 
-### 3. 节假日表过期提示未接入 UI
-
-- **位置**：`Sources/MoleWidgetCore/Salary/SalaryEngine.swift:11`（计算）→ `Sources/MoleWidgetCore/Salary/SalaryTypes.swift:81,118`（存入 `SalarySnapshot`）
-- **现象**：`tableExpired` 全仓库仅在 `Salary/` 目录内被写入和传递，`Sources/MoleWidgetCore/Views/Sections/SalarySectionView.swift` 与 `SalarySettingsView.swift` 中均无读取点。2027 年起会静默按「周一~五」规则计算工作日，用户无感知；跨年时当月工作日数变化还会导致日薪跳变。
-- **触发条件**：内置节假日表覆盖范围结束后的年份，即 2027 年起自动出现。
-- **修法方向**：在浮窗顶部与设置页读取 `snapshot.tableExpired` 并展示红字提示。`README.md:312-314` 已描述该提示，目前尚未实现。
-
 ### 4. 截图流程不预检查权限
 
 - **位置**：`Sources/MoleWidgetCore/Screenshot/Permission/PermissionManager.swift:83,88`
@@ -164,12 +157,6 @@
 - **触发条件**：在系统设置中改动授权状态后返回应用。
 - **修法方向**：应用回到前台时刷新权限快照，并同时处理 authorized 与 denied 两个方向。
 
-### 21. README 与代码不一致：标注工具数量
-
-- **位置**：`README.md:53` 与 `Sources/MoleWidgetCore/Screenshot/Editor/EditorState.swift:21`
-- **现象**：README 列出「箭头 / 矩形 / 圆 / 线条 / 文字 / 马赛克 / 自由笔」共 7 项并称 8 个工具（含颜色选择器）。实际 `EditorTool` 只有 6 个 case：`rectangle, ellipse, arrow, pencil, mosaic, text`，没有独立的线条工具，直线由 `pencil` 绘制。
-- **修法方向**：以代码为准修订 README 措辞与计数。
-
 ### 22. 高 DPI 大尺寸图像无上限保护
 
 - **位置**：`Sources/MoleWidgetCore/Cursor/CursorThemeService.swift:329-346`
@@ -205,6 +192,19 @@
   - 导出侧：基线改用 `EditorTextLayout.capHeightOffset`（= `capHeight / 2`），与画布侧共用同一「大写中线」定义；字形起点补 `horizontalInset`；原本内联在渲染器里的 `systemMediumFont` 一并迁入共享文件。
 - **验证**：`NSHostingView` 离屏渲染实测（4 个字号 × 2 个缩放系数），画布侧与导出侧换算回源图 point 空间后 **|Δ基线| ≤ 0.094pt、|Δ左缘| ≤ 0.044pt**（阈值 0.15pt）；CoreText 与 AppKit 的 ascent/descent/capHeight 逐值一致；编辑态与落笔态基线一致（测得的差异全部来自光标 caret 横跨整个行高）。新增 `Tests/MoleWidgetCoreTests/Screenshot/EditorTextLayoutTests.swift`（8 个用例）锁住常量与公式。
 
+### F2. 节假日表过期提示未接入 UI
+
+- **位置**：`Sources/MoleWidgetCore/Views/Sections/SalarySectionView.swift`（浮窗顶部）与 `Sources/MoleWidgetCore/Views/Sections/SalarySettingsView.swift`（设置页）。
+- **现象**：原 `tableExpired` 只在 `Salary/` 目录内写入和传递，浮窗与设置页都没有读取点 —— 内置表覆盖范围结束后的年份会静默按「周一~五」规则计算工作日，用户无感知；跨年时当月工作日数变化还会导致日薪跳变。
+- **修法**：两处 UI 均读取 `snapshot.tableExpired` 并展示红字提示，提示文案用 `ChineseWorkdayCalendar.lastUpdatedYear` 插值，随表更新年份自动变化，不需要每年手改文案。
+- **验证**：内置表已覆盖至 2027 年（国办发明电〔2026〕10 号），`isTableExpired` 对 2027 年返回 false、对 2028 年返回 true，`Tests/MoleWidgetCoreTests/SalaryEngineTests.swift` 有双向断言锁住该语义。
+
+### F3. README 与代码不一致：标注工具数量
+
+- **位置**：`README.md` 使用说明表格 与 `Sources/MoleWidgetCore/Screenshot/Editor/EditorState.swift`。
+- **现象**：README 使用说明写「8 个工具按钮 + 颜色选择器」，实际 `EditorTool` 只有 6 个 case：`rectangle, ellipse, arrow, pencil, mosaic, text` —— 没有独立的线条工具，直线由 `pencil` 绘制。README 功能特点一节已按 6 个标注工具描述，两节计数不一致。
+- **修法**：以代码为准，把使用说明表格的计数改为 6 个工具按钮 + 颜色选择器。
+
 ---
 
 ## 已核实为正常
@@ -217,7 +217,7 @@
 - **全局快捷键无泄漏**：`GlobalShortcutService.stop():197` 会将 paused 条目放回 active 表统一注销，deinit 有 8 条断言兜底（`:511-530`）。
 - **截图多屏并发**：并发上限 3、主屏优先、AppKit frame 与 SCK contentRect 做 0.5 pt 容差校验（`Screenshot/Capture/CapturePipeline.swift:236,282,320`）。
 - **撤销/重做**：双栈实现，commit 时清空 redo 栈（`Screenshot/Editor/EditorState.swift:208-209,266`）。
-- **测试覆盖**：260 个 `@Test`、22 个测试文件，覆盖全部采集器、格式化、工资引擎、快捷键。
+- **测试覆盖**：296 个 `@Test`、25 个测试文件（26 个 `@Suite`），覆盖全部采集器、格式化、工资引擎、快捷键。
 - **桌面浮窗层级**：选在 Finder 桌面图标窗口之上、普通窗口之下，避开了 Finder 透明全屏窗口吞点击的问题（`MoleWidgetApp.swift:384`，含解释性注释）。
 
 ---

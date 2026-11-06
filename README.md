@@ -29,7 +29,7 @@
   - **网络**:下载/上传速率 + 接口名 + IP
   - **电源**:电量 + 健康度 + 充放电状态 + 电池温度
   - **进程**:Top 3 进程按 CPU
-  - **工资**:实时显示今日已赚 / 本月累计 / 本年累计 / 在职累计,支持税后月薪、上下班时间、午休时段、工作模式设置,按中国法定节假日 + 调休自动算月工作日;下班时间早于上班时间时按跨午夜班次计算(凌晨仍算在上班那天),加班不计入、超过下班时间后按日薪封顶
+  - **工资**:实时显示今日已赚 / 本月累计 / 本年累计 / 在职累计,支持税后月薪、上下班时间、午休时段、工作模式设置,按中国法定节假日 + 调休自动算月工作日(内置 2024-2027 国务院放假调休表,2028 年起按周一~五估算并红字提示);下班时间早于上班时间时按跨午夜班次计算(凌晨仍算在上班那天),加班不计入、超过下班时间后按日薪封顶
 - **SMC CPU 温度**:Apple Silicon die 温度中位数(防单点传感器异常)
 - **后台采样能耗优化**:Timer tolerance 让 macOS 合并唤醒
 - **启动时间锁保护**:killStaleWidgetProcess 启动时清旧进程
@@ -162,7 +162,7 @@ make install
 | 操作 | 触发 | 说明 |
 |------|------|------|
 | 触发截图 | ⇧⌘2 / ⇧⌃⌥A | 全局快捷键,可在截图设置窗口改键 |
-| 编辑标注 | 编辑器打开后 | 8 个工具按钮 + 颜色选择器 |
+| 编辑标注 | 编辑器打开后 | 6 个工具按钮 + 颜色选择器 |
 | OCR 识别 | 编辑器 → 识别 | macOS Vision 本地识别,1-3 秒 |
 | 翻译 | 编辑器 → 翻译 | MiniMax API 翻译,3-5 秒 |
 | 一键复制 | 翻译完成后 | 复制译文到剪贴板 |
@@ -226,20 +226,22 @@ Vitals/
 │       ├── Formatting/ (Fmt + MenuBarText)
 │       ├── Views/ (12 个 UI 组件,含 Salary section/settings)
 │       ├── Store/MetricsStore.swift   # @MainActor @Observable 中央数据 store
-│       └── MiniMax/                    # MiniMax 集成 (5 个文件)
+│       └── MiniMax/                    # MiniMax 集成 (6 个文件)
 │           ├── MinimaxTypes.swift
 │           ├── MinimaxClient.swift    # URLSession + Cookie 认证
 │           ├── MinimaxMapper.swift    # JSON → Snapshot
 │           ├── MinimaxKeychain.swift  # macOS Keychain 凭据存储
-│           └── MinimaxManager.swift   # @MainActor @Observable 5min 定时器
+│           ├── MinimaxManager.swift   # @MainActor @Observable 5min 定时器
+│           └── MinimaxTokenRenewer.swift # _token 每日 4 点自动续期
 │       └── Salary/                    # 实时工资模块 (4 个文件)
 │           ├── SalaryTypes.swift      # SalarySettings / SalarySnapshot / SalaryState
 │           ├── SalaryEngine.swift     # 纯计算引擎
 │           ├── SalaryManager.swift    # @MainActor @Observable 1秒定时器
-│           └── ChineseWorkdayCalendar.swift  # 国务院 2024-2026 放假调休表
-│       └── Cursor/                    # 系统光标主题模块 (3 个文件) → 见 CURSOR.md
+│           └── ChineseWorkdayCalendar.swift  # 国务院 2024-2027 放假调休表
+│       └── Cursor/                    # 系统光标主题模块 (4 个文件) → 见 CURSOR.md
 │           ├── CGSCursorBridge.swift   # CGS 私有 API 封装 (dlsym + 缩放扰动刷新)
 │           ├── ANIThemeLoader.swift    # Windows .ani 动画光标解析
+│           ├── CursorSettingsView.swift # 自定义光标设置面板
 │           └── CursorThemeService.swift# 注册/回滚 + 睡眠唤醒重应用
 │       └── Screenshot/                # 截图模块 (48 个文件)
 │           ├── ScreenshotServices.swift       # 顶层协调
@@ -256,11 +258,11 @@ Vitals/
 ├── Resources/
 │   ├── AppIcon.icns
 │   ├── Info.plist
-│   └── Cursors/                  # 16 个 .ani 光标主题 (make cursors 装到 Application Support)
+│   └── Cursors/                  # 17 个 .ani 光标主题文件 (make cursors 装到 Application Support)
 ├── Scripts/
 │   └── make-icon.swift                # 图标生成
 ├── Tests/
-│   └── MoleWidgetCoreTests/ (22 文件,260 个 @Test)
+│   └── MoleWidgetCoreTests/ (25 文件,296 个 @Test / 26 个 @Suite)
 ├── Package.swift                       # SwiftPM 入口
 ├── Makefile                            # 打包 .app
 ├── CURSOR.md                           # 自定义光标模块文档
@@ -320,7 +322,7 @@ Apple Silicon 才有 SMC 温度传感器。Intel Mac / 沙盒化进程拿不到�
 
 ### 工资 section 显示"节假日表已过期"
 
-内嵌的中国法定节假日表覆盖 2024-2026 三年（来自国务院办公厅通知原文）。2027 年起系统会走默认"周一~五"规则，并在浮窗顶部 + 设置页加红字提示。**手动更新**：每年 12 月等国务院发新通知后，把数据追加到 `Sources/MoleWidgetCore/Salary/ChineseWorkdayCalendar.swift` 的 table 字典，然后 `make build` 重新打包。
+内嵌的中国法定节假日表覆盖 2024-2027 四年（来自国务院办公厅通知原文）。2028 年起系统会走默认"周一~五"规则，并在浮窗顶部 + 设置页加红字提示。**手动更新**：每年 12 月等国务院发新通知后，把数据追加到 `Sources/MoleWidgetCore/Salary/ChineseWorkdayCalendar.swift` 的 table 字典，然后 `make app` 重新打包。
 
 ### 截图快捷键不生效
 

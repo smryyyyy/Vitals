@@ -1,10 +1,11 @@
 import Foundation
 
-/// 国务院办公厅发布的年度法定节假日 + 调休表,内嵌硬编码,覆盖 2024-2026。
+/// 国务院办公厅发布的年度法定节假日 + 调休表,内嵌硬编码,覆盖 2024-2027。
 /// 数据源:
 ///   - 2024: 国办发明电〔2023〕7 号
 ///   - 2025: 国办发明电〔2024〕号
 ///   - 2026: 国办发明电〔2025〕7 号
+///   - 2027: 国办发明电〔2026〕10 号
 public enum WorkdayKind {
     /// 法定节假日(休息)
     case legalHoliday
@@ -13,11 +14,11 @@ public enum WorkdayKind {
 }
 
 /// 简单的中国法定工作日查询。
-/// 已知局限:本表只覆盖 2024-2026,超过 `lastUpdatedYear` 后 `isTableExpired` 返回 true,
+/// 已知局限:本表只覆盖 2024-2027,超过 `lastUpdatedYear` 后 `isTableExpired` 返回 true,
 /// 方便上层提示用户升级。
 public enum ChineseWorkdayCalendar {
     /// 表最后覆盖到哪一年
-    public static let lastUpdatedYear: Int = 2026
+    public static let lastUpdatedYear: Int = 2027
 
     private static let table: [String: WorkdayKind] = {
         var t: [String: WorkdayKind] = [:]
@@ -132,6 +133,41 @@ public enum ChineseWorkdayCalendar {
         t["2026-10-06"] = .legalHoliday
         t["2026-10-07"] = .legalHoliday
         t["2026-10-10"] = .makeupWorkday
+        // ===== 2027 =====
+        t["2027-01-01"] = .legalHoliday
+        t["2027-01-02"] = .legalHoliday
+        t["2027-01-03"] = .legalHoliday
+        t["2027-01-31"] = .makeupWorkday
+        t["2027-02-05"] = .legalHoliday
+        t["2027-02-06"] = .legalHoliday
+        t["2027-02-07"] = .legalHoliday
+        t["2027-02-08"] = .legalHoliday
+        t["2027-02-09"] = .legalHoliday
+        t["2027-02-10"] = .legalHoliday
+        t["2027-02-11"] = .legalHoliday
+        t["2027-02-12"] = .legalHoliday
+        t["2027-02-13"] = .legalHoliday
+        t["2027-02-14"] = .makeupWorkday
+        t["2027-04-03"] = .legalHoliday
+        t["2027-04-04"] = .legalHoliday
+        t["2027-04-05"] = .legalHoliday
+        t["2027-05-01"] = .legalHoliday
+        t["2027-05-02"] = .legalHoliday
+        t["2027-05-03"] = .legalHoliday
+        t["2027-05-04"] = .legalHoliday
+        t["2027-05-05"] = .legalHoliday
+        t["2027-05-08"] = .makeupWorkday
+        t["2027-06-09"] = .legalHoliday
+        t["2027-09-15"] = .legalHoliday
+        t["2027-09-26"] = .makeupWorkday
+        t["2027-10-01"] = .legalHoliday
+        t["2027-10-02"] = .legalHoliday
+        t["2027-10-03"] = .legalHoliday
+        t["2027-10-04"] = .legalHoliday
+        t["2027-10-05"] = .legalHoliday
+        t["2027-10-06"] = .legalHoliday
+        t["2027-10-07"] = .legalHoliday
+        t["2027-10-09"] = .makeupWorkday
         return t
     }()
 

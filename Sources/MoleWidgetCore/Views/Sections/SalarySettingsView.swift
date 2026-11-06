@@ -48,7 +48,7 @@ public struct SalarySettingsView: View {
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
                     }
-                    Text("按中国法定节假日 + 调休自动计算,2027 年数据未更新")
+                    Text("按中国法定节假日 + 调休自动计算,数据覆盖至 \(ChineseWorkdayCalendar.lastUpdatedYear) 年")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                     // 与浮窗顶部同源:表过期时日薪是按"周一~五"估的,必须让用户看见

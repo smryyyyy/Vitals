@@ -86,6 +86,61 @@ import Testing
         #expect(ChineseWorkdayCalendar.isWorkday(Self.date(2026, 2, 28)))
     }
 
+    @Test func calendar_isWorkday_2027SpringFestival_allHoliday() {
+        // 2027 春节 9 天 (2/5 除夕 - 2/13 正月初八)
+        for d in 5...13 {
+            #expect(!ChineseWorkdayCalendar.isWorkday(Self.date(2027, 2, d)),
+                    "2027-02-\(d) 应该是法定假日")
+        }
+    }
+
+    @Test func calendar_isWorkday_2027SpringFestival_makeupWorkday() {
+        // 1/31 (Sun) 和 2/14 (Sun) 是调休上班
+        #expect(ChineseWorkdayCalendar.isWorkday(Self.date(2027, 1, 31)))
+        #expect(ChineseWorkdayCalendar.isWorkday(Self.date(2027, 2, 14)))
+    }
+
+    @Test func calendar_isWorkday_2027NationalDay_allHoliday() {
+        // 10/1-7 国庆 7 天假
+        for d in 1...7 {
+            #expect(!ChineseWorkdayCalendar.isWorkday(Self.date(2027, 10, d)),
+                    "2027-10-\(d) 应该是法定假日")
+        }
+    }
+
+    @Test func calendar_isWorkday_2027NationalDay_makeupWorkday() {
+        // 9/26 (Sun) 和 10/9 (Sat) 是调休上班
+        #expect(ChineseWorkdayCalendar.isWorkday(Self.date(2027, 9, 26)))
+        #expect(ChineseWorkdayCalendar.isWorkday(Self.date(2027, 10, 9)))
+    }
+
+    @Test func calendar_isWorkday_2027LaborDay_makeupWorkday() {
+        // 5/8 (Sat) 是调休上班
+        #expect(ChineseWorkdayCalendar.isWorkday(Self.date(2027, 5, 8)))
+        // 5/1-5 劳动节 5 天假
+        for d in 1...5 {
+            #expect(!ChineseWorkdayCalendar.isWorkday(Self.date(2027, 5, d)),
+                    "2027-05-\(d) 应该是法定假日")
+        }
+    }
+
+    @Test func calendar_isWorkday_2027OtherHolidays() {
+        // 元旦 1/1-3
+        for d in 1...3 {
+            #expect(!ChineseWorkdayCalendar.isWorkday(Self.date(2027, 1, d)),
+                    "2027-01-\(d) 应该是法定假日")
+        }
+        // 清明 4/3-5
+        for d in 3...5 {
+            #expect(!ChineseWorkdayCalendar.isWorkday(Self.date(2027, 4, d)),
+                    "2027-04-\(d) 应该是法定假日")
+        }
+        // 端午 6/9
+        #expect(!ChineseWorkdayCalendar.isWorkday(Self.date(2027, 6, 9)))
+        // 中秋 9/15
+        #expect(!ChineseWorkdayCalendar.isWorkday(Self.date(2027, 9, 15)))
+    }
+
     // MARK: - ChineseWorkdayCalendar:monthWorkdays
 
     @Test func calendar_monthWorkdays_2024_jan() {
@@ -151,14 +206,31 @@ import Testing
         #expect(ChineseWorkdayCalendar.monthWorkdays(year: 2026, month: 2) == 16)
     }
 
+    @Test func calendar_monthWorkdays_2027_jan_newYear() {
+        // 2027-01:31 天 - 10 个周末 - 1 假日(1/1 元旦) + 1 调休(1/31) = 21
+        #expect(ChineseWorkdayCalendar.monthWorkdays(year: 2027, month: 1) == 21)
+    }
+
+    @Test func calendar_monthWorkdays_2027_feb_springFestival() {
+        // 2027-02:28 天 - 8 个周末 - 6 假日(2/5-13 落在工作日的部分) + 1 调休(2/14) = 15
+        #expect(ChineseWorkdayCalendar.monthWorkdays(year: 2027, month: 2) == 15)
+    }
+
+    @Test func calendar_monthWorkdays_2027_oct_nationalDay() {
+        // 2027-10:31 天 - 10 个周末 - 5 假日(10/1-7 落在工作日的部分) + 1 调休(10/9) = 17
+        #expect(ChineseWorkdayCalendar.monthWorkdays(year: 2027, month: 10) == 17)
+    }
+
     // MARK: - ChineseWorkdayCalendar:过期判断
 
     @Test func calendar_tableExpired_2026_9_returnsFalse() {
         #expect(!ChineseWorkdayCalendar.isTableExpired(Self.date(2026, 9, 15)))
     }
 
-    @Test func calendar_tableExpired_2027_1_returnsTrue() {
-        #expect(ChineseWorkdayCalendar.isTableExpired(Self.date(2027, 1, 1)))
+    @Test func calendar_tableExpired_2028_1_returnsTrue() {
+        #expect(ChineseWorkdayCalendar.isTableExpired(Self.date(2028, 1, 1)))
+        // 2027 已纳入表覆盖范围,不再算过期
+        #expect(!ChineseWorkdayCalendar.isTableExpired(Self.date(2027, 1, 1)))
     }
 
     // MARK: - SalarySettings 派生量
@@ -340,10 +412,10 @@ import Testing
     // MARK: - 节假日表过期
 
     @Test func compute_tableExpired_returnsExpiredFlag() {
-        // 2027 年系统应标 tableExpired=true,计算仍用默认规则
-        let snap = SalaryEngine.compute(settings: Self.defaultSettings, now: Self.date(2027, 1, 4, 10))
+        // 2028 年系统应标 tableExpired=true,计算仍用默认规则
+        let snap = SalaryEngine.compute(settings: Self.defaultSettings, now: Self.date(2028, 1, 4, 10))
         #expect(snap.tableExpired == true)
-        // 2027-01-04 是周一,默认是工作日
+        // 2028-01-04 是周二,默认是工作日
         #expect(snap.state == .working)
     }
 
@@ -646,7 +718,7 @@ import Testing
 
     @Test func calendar_workdaysBetween_matchesDayByDay() {
         // 缓存位图是重写实现,这里拿逐日 isWorkday 当基准做交叉验证
-        for (y, m) in [(2024, 2), (2024, 10), (2025, 1), (2026, 2), (2026, 10)] {
+        for (y, m) in [(2024, 2), (2024, 10), (2025, 1), (2026, 2), (2026, 10), (2027, 2), (2027, 10)] {
             let cal = ChineseWorkdayCalendar.calendar
             let start = cal.date(from: DateComponents(year: y, month: m, day: 1))!
             let end = cal.date(byAdding: .month, value: 1, to: start)!
